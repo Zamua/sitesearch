@@ -28,7 +28,7 @@ struct SiteEntity: AppEntity {
 /// query shape: allEntities() feeds the full dropdown and Spotlight's
 /// type-to-filter works over it for free. entities(matching:) additionally
 /// lets the keyword alias match, not just the display name.
-struct SiteEntityQuery: EntityQuery, EnumerableEntityQuery, EntityStringQuery {
+struct SiteEntityQuery: EnumerableEntityQuery, EntityStringQuery {
     func allEntities() async throws -> [SiteEntity] {
         SiteStore.load().map(SiteEntity.init)
     }

@@ -6,6 +6,7 @@ import SwiftUI
 struct ConfigView: View {
     @State private var sites: [Site] = SiteStore.load()
     @State private var selection: Site.ID?
+    @State private var saveTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -51,7 +52,14 @@ struct ConfigView: View {
             .padding(12)
         }
         .onChange(of: sites) {
-            SiteStore.save(sites)
+            // Debounced: a save per keystroke is needless disk churn and
+            // widens the window where Spotlight reads a half-typed template.
+            saveTask?.cancel()
+            saveTask = Task {
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
+                SiteStore.save(sites)
+            }
         }
     }
 

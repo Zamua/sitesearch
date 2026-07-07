@@ -24,19 +24,26 @@ struct SearchSiteIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         let url = try Self.buildURL(template: site.template, query: query)
-        NSWorkspace.shared.open(url)
+        guard NSWorkspace.shared.open(url) else {
+            throw SearchSiteError.openFailed(url.absoluteString)
+        }
         return .result()
     }
 
-    /// RFC 3986 unreserved characters. Deliberately narrower than
-    /// .urlQueryAllowed, which would leave '&', '=', '+' and friends raw and
-    /// let a query like "c++" or "a&b" corrupt the URL.
-    private static let queryAllowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+    /// RFC 3986 unreserved characters, ASCII only. Deliberately narrower than
+    /// .urlQueryAllowed (which passes '&', '=', '+' through raw) and than
+    /// .alphanumerics (Unicode-wide, which would leave non-ASCII un-encoded
+    /// and rely on URL(string:) leniency).
+    private static let queryAllowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
     static func buildURL(template: String, query: String) throws -> URL {
+        guard template.contains("{query}") else {
+            throw SearchSiteError.missingPlaceholder(template)
+        }
         let encoded = query.addingPercentEncoding(withAllowedCharacters: queryAllowed) ?? query
         let urlString = template.replacingOccurrences(of: "{query}", with: encoded)
-        guard let url = URL(string: urlString), url.scheme == "https" || url.scheme == "http" else {
+        guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http" else {
             throw SearchSiteError.invalidURL(urlString)
         }
         return url
@@ -45,11 +52,17 @@ struct SearchSiteIntent: AppIntent {
 
 enum SearchSiteError: Error, CustomLocalizedStringResourceConvertible {
     case invalidURL(String)
+    case missingPlaceholder(String)
+    case openFailed(String)
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .invalidURL(let s):
             return "The site's URL template produced an invalid URL: \(s)"
+        case .missingPlaceholder(let t):
+            return "The site's URL template is missing the {query} placeholder: \(t)"
+        case .openFailed(let s):
+            return "The browser could not open: \(s)"
         }
     }
 }
