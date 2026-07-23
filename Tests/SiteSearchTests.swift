@@ -44,60 +44,106 @@ final class BuildURLTests: XCTestCase {
     }
 }
 
+final class SlotAllocationTests: XCTestCase {
+    func testDefaultsNeverConsumeSlots() {
+        let result = SiteStore.allocatingSlots(SiteStore.defaults)
+        XCTAssertTrue(result.allSatisfy { $0.slot == nil })
+    }
+
+    func testCustomSitesGetLowestFreeSlots() {
+        var sites = SiteStore.defaults
+        sites.append(Site(keyword: "one", name: "One", template: "https://one.example/{query}"))
+        sites.append(Site(keyword: "two", name: "Two", template: "https://two.example/{query}"))
+        let result = SiteStore.allocatingSlots(sites)
+        XCTAssertEqual(result.compactMap(\.slot), [1, 2])
+    }
+
+    func testExistingSlotsAreStableAndGapsFill() {
+        var sites = SiteStore.defaults
+        sites.append(Site(keyword: "kept", name: "Kept", template: "https://kept.example/{query}", slot: 2))
+        sites.append(Site(keyword: "new", name: "New", template: "https://new.example/{query}"))
+        let result = SiteStore.allocatingSlots(sites)
+        XCTAssertEqual(result.first { $0.keyword == "kept" }?.slot, 2, "existing slot moved")
+        XCTAssertEqual(result.first { $0.keyword == "new" }?.slot, 1, "gap not filled")
+    }
+
+    func testOverflowBeyondSlotCountStaysSlotless() {
+        var sites: [Site] = []
+        for i in 0..<(SiteStore.slotCount + 3) {
+            sites.append(Site(keyword: "k\(i)", name: "S\(i)", template: "https://s\(i).example/{query}"))
+        }
+        let result = SiteStore.allocatingSlots(sites)
+        XCTAssertEqual(result.compactMap(\.slot).count, SiteStore.slotCount)
+    }
+}
+
 final class QuickKeySyncTests: XCTestCase {
     let bundle = "com.zamua.SiteSearch"
 
-    func testEmptyStoreGetsAllSuggestions() {
-        let (store, added, _) = QuickKeySync.merged(existing: nil, bundleID: bundle)
-        XCTAssertEqual(added, QuickKeySync.suggested.count)
-        let ns = store[QuickKeySync.namespace] as? [String: String]
-        XCTAssertEqual(ns?["\(bundle).SearchGitHubReposIntent"], "repo")
-        XCTAssertEqual(ns?["\(bundle).SearchGitHubIntent"], "code")
-        XCTAssertEqual(ns?["\(bundle).SearchGoogleIntent"], "google")
+    func testDesiredMapsDefaultsToDedicatedIntents() {
+        let map = QuickKeySync.desired(bundleID: bundle, sites: SiteStore.defaults)
+        XCTAssertEqual(map["\(bundle).SearchGoogleIntent"], "google")
+        XCTAssertEqual(map["\(bundle).SearchGitHubIntent"], "code")
+        XCTAssertEqual(map["\(bundle).SearchGitHubReposIntent"], "repo")
+        XCTAssertEqual(map["\(bundle).SearchSiteIntent"], "ws")
     }
 
-    func testExistingAssignmentIsNeverOverwritten() {
-        let existing: [String: Any] = [QuickKeySync.namespace: ["\(bundle).SearchGoogleIntent": "goog"]]
-        let (store, _, _) = QuickKeySync.merged(existing: existing, bundleID: bundle)
-        let ns = store[QuickKeySync.namespace] as? [String: String]
-        XCTAssertEqual(ns?["\(bundle).SearchGoogleIntent"], "goog", "user's custom key was clobbered")
+    func testDesiredMapsSlottedSitesToSlotIntents() {
+        var sites = SiteStore.defaults
+        sites.append(Site(keyword: "hn", name: "Hacker News", template: "https://hn.algolia.com/?q={query}", slot: 3))
+        let map = QuickKeySync.desired(bundleID: bundle, sites: sites)
+        XCTAssertEqual(map["\(bundle).CustomSearch3Intent"], "hn")
     }
 
-    func testClaimedAbbreviationIsNotStolen() {
+    func testKeywordEditUpdatesOurEntry() {
+        var sites = SiteStore.defaults
+        sites[0].keyword = "goog"
+        let want = QuickKeySync.desired(bundleID: bundle, sites: sites)
+        let existing: [String: Any] = [QuickKeySync.namespace: ["\(bundle).SearchGoogleIntent": "google"]]
+        let (store, changed) = QuickKeySync.merged(existing: existing, desired: want, bundleID: bundle)
+        let ns = store[QuickKeySync.namespace] as? [String: String]
+        XCTAssertTrue(changed)
+        XCTAssertEqual(ns?["\(bundle).SearchGoogleIntent"], "goog", "our entry should mirror the config")
+    }
+
+    func testForeignAbbreviationIsNotStolenAndForeignEntriesSurvive() {
+        let want = QuickKeySync.desired(bundleID: bundle, sites: SiteStore.defaults)
         let existing: [String: Any] = [QuickKeySync.namespace: ["com.other.app.SomeIntent": "code"]]
-        let (store, _, _) = QuickKeySync.merged(existing: existing, bundleID: bundle)
+        let (store, _) = QuickKeySync.merged(existing: existing, desired: want, bundleID: bundle)
         let ns = store[QuickKeySync.namespace] as? [String: String]
         XCTAssertNil(ns?["\(bundle).SearchGitHubIntent"], "stole an abbreviation another action owns")
         XCTAssertEqual(ns?["com.other.app.SomeIntent"], "code")
+        XCTAssertEqual(ns?["\(bundle).SearchGoogleIntent"], "google", "non-colliding entries should still land")
     }
 
     func testStaleOwnEntriesArePruned() {
+        let want = QuickKeySync.desired(bundleID: bundle, sites: SiteStore.defaults)
         let existing: [String: Any] = [QuickKeySync.namespace: [
             "\(bundle).SearchYouTubeIntent": "yt",
             "com.other.app.SomeIntent": "zz",
         ]]
-        let (store, _, pruned) = QuickKeySync.merged(existing: existing, bundleID: bundle)
+        let (store, changed) = QuickKeySync.merged(existing: existing, desired: want, bundleID: bundle)
         let ns = store[QuickKeySync.namespace] as? [String: String]
-        XCTAssertEqual(pruned, 1)
+        XCTAssertTrue(changed)
         XCTAssertNil(ns?["\(bundle).SearchYouTubeIntent"], "stale entry for removed intent kept")
         XCTAssertEqual(ns?["com.other.app.SomeIntent"], "zz", "other app's entry touched")
     }
 
-    func testSyncIsIdempotent() {
-        let (once, addedOnce, _) = QuickKeySync.merged(existing: nil, bundleID: bundle)
-        let (twice, addedTwice, prunedTwice) = QuickKeySync.merged(existing: once, bundleID: bundle)
-        XCTAssertGreaterThan(addedOnce, 0)
-        XCTAssertEqual(addedTwice, 0)
-        XCTAssertEqual(prunedTwice, 0)
+    func testMergeIsIdempotent() {
+        let want = QuickKeySync.desired(bundleID: bundle, sites: SiteStore.defaults)
+        let (once, changedOnce) = QuickKeySync.merged(existing: nil, desired: want, bundleID: bundle)
+        let (twice, changedTwice) = QuickKeySync.merged(existing: once, desired: want, bundleID: bundle)
+        XCTAssertTrue(changedOnce)
+        XCTAssertFalse(changedTwice)
         XCTAssertEqual(once[QuickKeySync.namespace] as? [String: String],
                        twice[QuickKeySync.namespace] as? [String: String])
     }
 
-    func testSuggestionsCoverEveryPerSiteIntent() throws {
+    func testSlotIntentsExistForTheWholeRange() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("Sources/SiteIntents.swift"), encoding: .utf8)
-        for intentName in QuickKeySync.suggested.keys where intentName != "SearchSiteIntent" {
-            XCTAssertTrue(source.contains("struct \(intentName)"), "suggested quick key for unknown intent \(intentName)")
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/SlotIntents.swift"), encoding: .utf8)
+        for i in 1...SiteStore.slotCount {
+            XCTAssertTrue(source.contains("struct CustomSearch\(i)Intent"), "missing slot intent \(i)")
         }
     }
 }

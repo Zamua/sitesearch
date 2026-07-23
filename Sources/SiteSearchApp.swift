@@ -6,6 +6,8 @@ struct SiteSearchApp: App {
         // Idempotent, merge-only: assigns default Spotlight quick keys on
         // every launch without touching user customizations.
         QuickKeySync.sync()
+        // Expand parameterized App Shortcut phrases from the current config.
+        SiteSearchShortcuts.updateAppShortcutParameters()
     }
 
     var body: some Scene {

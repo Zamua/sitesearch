@@ -47,14 +47,12 @@ struct ConfigView: View {
                 .disabled(selection == nil)
 
                 Button {
-                    let added = QuickKeySync.sync()
-                    syncMessage = added > 0
-                        ? "Added \(added) Spotlight quick keys"
-                        : "All quick keys already assigned"
+                    let changed = QuickKeySync.sync()
+                    syncMessage = changed ? "Spotlight quick keys updated" : "Quick keys already in sync"
                 } label: {
-                    Label("Set Up Quick Keys", systemImage: "command.square")
+                    Label("Sync Quick Keys", systemImage: "command.square")
                 }
-                .help("Assigns each site's keyword as its Spotlight quick key, skipping any you've customized")
+                .help("Mirrors each site's keyword into Spotlight as its quick key (also happens automatically)")
 
                 Button {
                     showingExport = true
@@ -78,7 +76,9 @@ struct ConfigView: View {
             saveTask = Task {
                 try? await Task.sleep(for: .milliseconds(400))
                 guard !Task.isCancelled else { return }
-                SiteStore.save(sites)
+                // Assign back so in-memory state carries the allocated slots
+                // (equal values terminate the onChange cycle).
+                sites = SiteStore.save(sites)
             }
         }
         .sheet(isPresented: $showingExport) {
@@ -90,8 +90,7 @@ struct ConfigView: View {
         )) { payload in
             ImportSheet(entries: payload.entries) { chosen in
                 let (merged, added) = SiteExchange.merge(chosen, into: sites)
-                sites = merged
-                SiteStore.save(sites)
+                sites = SiteStore.save(merged)
                 syncMessage = "Imported \(added) site\(added == 1 ? "" : "s")"
             }
         }

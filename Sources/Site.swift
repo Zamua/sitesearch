@@ -7,12 +7,17 @@ struct Site: Codable, Identifiable, Hashable {
     var keyword: String
     var name: String
     var template: String
+    /// Which pre-compiled CustomSearchNIntent slot this site occupies.
+    /// nil for the built-in defaults (they have dedicated intents) and for
+    /// sites not yet assigned; SiteStore.save allocates the lowest free slot.
+    var slot: Int?
 
-    init(id: UUID = UUID(), keyword: String, name: String, template: String) {
+    init(id: UUID = UUID(), keyword: String, name: String, template: String, slot: Int? = nil) {
         self.id = id
         self.keyword = keyword
         self.name = name
         self.template = template
+        self.slot = slot
     }
 }
 
@@ -59,13 +64,40 @@ enum SiteStore {
         return sites
     }
 
-    static func save(_ sites: [Site]) {
+    static let slotCount = 20
+
+    /// Assigns the lowest free slot (1...slotCount) to every custom site that
+    /// lacks one. Defaults never consume slots; existing assignments are
+    /// stable; slots free up when their site is deleted. Sites beyond
+    /// slotCount stay slotless (still usable via the generic Search Site).
+    static func allocatingSlots(_ sites: [Site]) -> [Site] {
+        let defaultIDs = Set(defaults.map(\.id))
+        var used = Set(sites.compactMap(\.slot))
+        var result = sites
+        for i in result.indices where result[i].slot == nil && !defaultIDs.contains(result[i].id) {
+            if let free = (1...slotCount).first(where: { !used.contains($0) }) {
+                result[i].slot = free
+                used.insert(free)
+            }
+        }
+        return result
+    }
+
+    /// Returns the array actually persisted (with slots allocated) so callers
+    /// can keep their in-memory copy in sync and slot assignments stay stable.
+    @discardableResult
+    static func save(_ sites: [Site]) -> [Site] {
+        let slotted = allocatingSlots(sites)
         let dir = fileURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(sites) {
+        if let data = try? encoder.encode(slotted) {
             try? data.write(to: fileURL, options: .atomic)
         }
+        // Quick keys mirror the config (keyword == quick key), so every save
+        // re-syncs them; Spotlight picks the change up live.
+        QuickKeySync.sync()
+        return slotted
     }
 }
