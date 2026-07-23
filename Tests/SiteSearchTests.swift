@@ -70,6 +70,17 @@ final class DefaultSitesTests: XCTestCase {
         }
     }
 
+    func testPerSiteIntentsCoverAllDefaults() throws {
+        // Every default site must have a dedicated intent in SiteIntents.swift
+        // carrying its exact id and fallback template.
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/SiteIntents.swift"), encoding: .utf8)
+        for site in SiteStore.defaults {
+            XCTAssertTrue(source.contains(site.id.uuidString), "SiteIntents.swift missing intent for \(site.name) (id)")
+            XCTAssertTrue(source.contains(site.template), "SiteIntents.swift fallback template drifted for \(site.name)")
+        }
+    }
+
     func testScriptListMatchesDefaults() throws {
         // scripts/e2e-sites.sh carries a copy of the templates for live
         // verification; fail if the two lists drift.
