@@ -49,6 +49,7 @@ enum SiteStore {
         Site(id: UUID(uuidString: "9D2C63A0-5B21-4A2E-9C5A-000000000014")!, keyword: "go", name: "Go Packages", template: "https://pkg.go.dev/search?q={query}"),
         Site(id: UUID(uuidString: "9D2C63A0-5B21-4A2E-9C5A-000000000015")!, keyword: "nix", name: "nixpkgs", template: "https://search.nixos.org/packages?query={query}"),
         Site(id: UUID(uuidString: "9D2C63A0-5B21-4A2E-9C5A-000000000016")!, keyword: "imdb", name: "IMDb", template: "https://www.imdb.com/find/?q={query}"),
+        Site(id: UUID(uuidString: "9D2C63A0-5B21-4A2E-9C5A-000000000017")!, keyword: "ghr", name: "GitHub Repos", template: "https://github.com/search?q={query}&type=repositories"),
     ]
 
     static func load() -> [Site] {

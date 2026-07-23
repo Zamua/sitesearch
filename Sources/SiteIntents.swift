@@ -203,6 +203,18 @@ struct SearchNixpkgsIntent: AppIntent {
     }
 }
 
+struct SearchGitHubReposIntent: AppIntent {
+    static let title: LocalizedStringResource = "Search GitHub Repos"
+    static let description = IntentDescription("Search GitHub repositories by name in your default browser.")
+    static let supportedModes: IntentModes = .background
+    @Parameter(title: "Query") var query: String
+    static var parameterSummary: some ParameterSummary { Summary("Search GitHub Repos for \(\.$query)") }
+    @MainActor func perform() async throws -> some IntentResult {
+        try SiteIntentRunner.run(siteID: "9D2C63A0-5B21-4A2E-9C5A-000000000017", fallbackTemplate: "https://github.com/search?q={query}&type=repositories", query: query)
+        return .result()
+    }
+}
+
 struct SearchIMDbIntent: AppIntent {
     static let title: LocalizedStringResource = "Search IMDb"
     static let description = IntentDescription("Search IMDb in your default browser.")

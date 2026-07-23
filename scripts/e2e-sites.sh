@@ -32,6 +32,7 @@ PyPI|https://pypi.org/search/?q={query}
 pkg.go.dev|https://pkg.go.dev/search?q={query}
 nixpkgs|https://search.nixos.org/packages?query={query}
 IMDb|https://www.imdb.com/find/?q={query}
+GitHub Repos|https://github.com/search?q={query}&type=repositories
 "
 
 pass=0; gated=0; fail=0
