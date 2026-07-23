@@ -2,6 +2,12 @@ import SwiftUI
 
 @main
 struct SiteSearchApp: App {
+    init() {
+        // Idempotent, merge-only: assigns default Spotlight quick keys on
+        // every launch without touching user customizations.
+        QuickKeySync.sync()
+    }
+
     var body: some Scene {
         // Single window: multiple config windows would each hold their own
         // @State copy of the site list and clobber each other's saves.

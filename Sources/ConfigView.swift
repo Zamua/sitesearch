@@ -8,6 +8,8 @@ struct ConfigView: View {
     @State private var selection: Site.ID?
     @State private var saveTask: Task<Void, Never>?
     @State private var syncMessage: String?
+    @State private var showingExport = false
+    @State private var importEntries: [SiteExchange.Entry]?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -47,16 +49,23 @@ struct ConfigView: View {
                 Button {
                     let added = QuickKeySync.sync()
                     syncMessage = added > 0
-                        ? "Added \(added) Spotlight quick keys (g, gh, yt, ...)"
+                        ? "Added \(added) Spotlight quick keys"
                         : "All quick keys already assigned"
                 } label: {
                     Label("Set Up Quick Keys", systemImage: "command.square")
                 }
                 .help("Assigns each site's keyword as its Spotlight quick key, skipping any you've customized")
 
+                Button {
+                    showingExport = true
+                } label: {
+                    Label("Share…", systemImage: "square.and.arrow.up")
+                }
+                .help("Export selected sites as a .sitesearch file others can double-click to import")
+
                 Spacer()
 
-                Text(syncMessage ?? "Type a quick key in Spotlight (Cmd-Space), e.g. gh query")
+                Text(syncMessage ?? "Type a quick key in Spotlight (Cmd-Space), e.g. repo query")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -72,6 +81,31 @@ struct ConfigView: View {
                 SiteStore.save(sites)
             }
         }
+        .sheet(isPresented: $showingExport) {
+            ExportSheet(sites: sites)
+        }
+        .sheet(item: Binding(
+            get: { importEntries.map(ImportPayload.init) },
+            set: { importEntries = $0?.entries }
+        )) { payload in
+            ImportSheet(entries: payload.entries) { chosen in
+                let (merged, added) = SiteExchange.merge(chosen, into: sites)
+                sites = merged
+                SiteStore.save(sites)
+                syncMessage = "Imported \(added) site\(added == 1 ? "" : "s")"
+            }
+        }
+        .onOpenURL { url in
+            guard url.pathExtension.lowercased() == SiteExchange.fileExtension,
+                  let data = try? Data(contentsOf: url),
+                  let entries = try? SiteExchange.parse(data), !entries.isEmpty else { return }
+            importEntries = entries
+        }
+    }
+
+    private struct ImportPayload: Identifiable {
+        var entries: [SiteExchange.Entry]
+        var id: String { entries.map(\.id).joined(separator: ",") }
     }
 
     private func binding(for id: Site.ID, _ keyPath: WritableKeyPath<Site, String>) -> Binding<String> {

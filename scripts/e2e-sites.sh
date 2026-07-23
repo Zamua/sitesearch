@@ -17,21 +17,7 @@ UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML,
 # name|template  - keep in sync with SiteStore.defaults in Sources/Site.swift
 SITES="
 Google|https://www.google.com/search?q={query}
-DuckDuckGo|https://duckduckgo.com/?q={query}
-YouTube|https://www.youtube.com/results?search_query={query}
-Wikipedia|https://en.wikipedia.org/w/index.php?search={query}
-Reddit|https://www.reddit.com/search/?q={query}
-Amazon|https://www.amazon.com/s?k={query}
-Google Maps|https://www.google.com/maps/search/{query}
 GitHub|https://github.com/search?q={query}
-Stack Overflow|https://stackoverflow.com/search?q={query}
-Hacker News|https://hn.algolia.com/?q={query}
-MDN|https://developer.mozilla.org/en-US/search?q={query}
-npm|https://www.npmjs.com/search?q={query}
-PyPI|https://pypi.org/search/?q={query}
-pkg.go.dev|https://pkg.go.dev/search?q={query}
-nixpkgs|https://search.nixos.org/packages?query={query}
-IMDb|https://www.imdb.com/find/?q={query}
 GitHub Repos|https://github.com/search?q={query}&type=repositories
 "
 

@@ -48,32 +48,47 @@ final class QuickKeySyncTests: XCTestCase {
     let bundle = "com.zamua.SiteSearch"
 
     func testEmptyStoreGetsAllSuggestions() {
-        let (store, added) = QuickKeySync.merged(existing: nil, bundleID: bundle)
+        let (store, added, _) = QuickKeySync.merged(existing: nil, bundleID: bundle)
         XCTAssertEqual(added, QuickKeySync.suggested.count)
         let ns = store[QuickKeySync.namespace] as? [String: String]
         XCTAssertEqual(ns?["\(bundle).SearchGitHubReposIntent"], "repo")
+        XCTAssertEqual(ns?["\(bundle).SearchGitHubIntent"], "code")
+        XCTAssertEqual(ns?["\(bundle).SearchGoogleIntent"], "google")
     }
 
     func testExistingAssignmentIsNeverOverwritten() {
         let existing: [String: Any] = [QuickKeySync.namespace: ["\(bundle).SearchGoogleIntent": "goog"]]
-        let (store, _) = QuickKeySync.merged(existing: existing, bundleID: bundle)
+        let (store, _, _) = QuickKeySync.merged(existing: existing, bundleID: bundle)
         let ns = store[QuickKeySync.namespace] as? [String: String]
         XCTAssertEqual(ns?["\(bundle).SearchGoogleIntent"], "goog", "user's custom key was clobbered")
     }
 
     func testClaimedAbbreviationIsNotStolen() {
-        let existing: [String: Any] = [QuickKeySync.namespace: ["com.other.app.SomeIntent": "gh"]]
-        let (store, _) = QuickKeySync.merged(existing: existing, bundleID: bundle)
+        let existing: [String: Any] = [QuickKeySync.namespace: ["com.other.app.SomeIntent": "code"]]
+        let (store, _, _) = QuickKeySync.merged(existing: existing, bundleID: bundle)
         let ns = store[QuickKeySync.namespace] as? [String: String]
         XCTAssertNil(ns?["\(bundle).SearchGitHubIntent"], "stole an abbreviation another action owns")
-        XCTAssertEqual(ns?["com.other.app.SomeIntent"], "gh")
+        XCTAssertEqual(ns?["com.other.app.SomeIntent"], "code")
+    }
+
+    func testStaleOwnEntriesArePruned() {
+        let existing: [String: Any] = [QuickKeySync.namespace: [
+            "\(bundle).SearchYouTubeIntent": "yt",
+            "com.other.app.SomeIntent": "zz",
+        ]]
+        let (store, _, pruned) = QuickKeySync.merged(existing: existing, bundleID: bundle)
+        let ns = store[QuickKeySync.namespace] as? [String: String]
+        XCTAssertEqual(pruned, 1)
+        XCTAssertNil(ns?["\(bundle).SearchYouTubeIntent"], "stale entry for removed intent kept")
+        XCTAssertEqual(ns?["com.other.app.SomeIntent"], "zz", "other app's entry touched")
     }
 
     func testSyncIsIdempotent() {
-        let (once, addedOnce) = QuickKeySync.merged(existing: nil, bundleID: bundle)
-        let (twice, addedTwice) = QuickKeySync.merged(existing: once, bundleID: bundle)
+        let (once, addedOnce, _) = QuickKeySync.merged(existing: nil, bundleID: bundle)
+        let (twice, addedTwice, prunedTwice) = QuickKeySync.merged(existing: once, bundleID: bundle)
         XCTAssertGreaterThan(addedOnce, 0)
         XCTAssertEqual(addedTwice, 0)
+        XCTAssertEqual(prunedTwice, 0)
         XCTAssertEqual(once[QuickKeySync.namespace] as? [String: String],
                        twice[QuickKeySync.namespace] as? [String: String])
     }
@@ -84,6 +99,41 @@ final class QuickKeySyncTests: XCTestCase {
         for intentName in QuickKeySync.suggested.keys where intentName != "SearchSiteIntent" {
             XCTAssertTrue(source.contains("struct \(intentName)"), "suggested quick key for unknown intent \(intentName)")
         }
+    }
+}
+
+final class SiteExchangeTests: XCTestCase {
+    func testExportParseRoundtrip() throws {
+        let data = try SiteExchange.export(SiteStore.defaults)
+        let entries = try SiteExchange.parse(data)
+        XCTAssertEqual(entries.map(\.name), SiteStore.defaults.map(\.name))
+        XCTAssertEqual(entries.map(\.template), SiteStore.defaults.map(\.template))
+    }
+
+    func testUnsupportedVersionThrows() {
+        let data = Data(#"{"version": 99, "sites": []}"#.utf8)
+        XCTAssertThrowsError(try SiteExchange.parse(data))
+    }
+
+    func testMergeSkipsExactDuplicates() {
+        let entries = [SiteExchange.Entry(name: "Google", keyword: "google", template: "https://www.google.com/search?q={query}")]
+        let (result, added) = SiteExchange.merge(entries, into: SiteStore.defaults)
+        XCTAssertEqual(added, 0)
+        XCTAssertEqual(result.count, SiteStore.defaults.count)
+    }
+
+    func testMergeSuffixesCollidingKeywords() {
+        let entries = [SiteExchange.Entry(name: "My Google", keyword: "google", template: "https://google.example/{query}")]
+        let (result, added) = SiteExchange.merge(entries, into: SiteStore.defaults)
+        XCTAssertEqual(added, 1)
+        XCTAssertEqual(result.last?.keyword, "google2", "colliding keyword should get a numeric suffix")
+    }
+
+    func testMergeMintsFreshIDs() {
+        let entries = [SiteExchange.Entry(name: "New Site", keyword: "ns", template: "https://ns.example/?q={query}")]
+        let (result, _) = SiteExchange.merge(entries, into: SiteStore.defaults)
+        let newSite = result.last!
+        XCTAssertFalse(SiteStore.defaults.map(\.id).contains(newSite.id))
     }
 }
 
