@@ -44,6 +44,49 @@ final class BuildURLTests: XCTestCase {
     }
 }
 
+final class QuickKeySyncTests: XCTestCase {
+    let bundle = "com.zamua.SiteSearch"
+
+    func testEmptyStoreGetsAllSuggestions() {
+        let (store, added) = QuickKeySync.merged(existing: nil, bundleID: bundle)
+        XCTAssertEqual(added, QuickKeySync.suggested.count)
+        let ns = store[QuickKeySync.namespace] as? [String: String]
+        XCTAssertEqual(ns?["\(bundle).SearchGitHubReposIntent"], "repo")
+    }
+
+    func testExistingAssignmentIsNeverOverwritten() {
+        let existing: [String: Any] = [QuickKeySync.namespace: ["\(bundle).SearchGoogleIntent": "goog"]]
+        let (store, _) = QuickKeySync.merged(existing: existing, bundleID: bundle)
+        let ns = store[QuickKeySync.namespace] as? [String: String]
+        XCTAssertEqual(ns?["\(bundle).SearchGoogleIntent"], "goog", "user's custom key was clobbered")
+    }
+
+    func testClaimedAbbreviationIsNotStolen() {
+        let existing: [String: Any] = [QuickKeySync.namespace: ["com.other.app.SomeIntent": "gh"]]
+        let (store, _) = QuickKeySync.merged(existing: existing, bundleID: bundle)
+        let ns = store[QuickKeySync.namespace] as? [String: String]
+        XCTAssertNil(ns?["\(bundle).SearchGitHubIntent"], "stole an abbreviation another action owns")
+        XCTAssertEqual(ns?["com.other.app.SomeIntent"], "gh")
+    }
+
+    func testSyncIsIdempotent() {
+        let (once, addedOnce) = QuickKeySync.merged(existing: nil, bundleID: bundle)
+        let (twice, addedTwice) = QuickKeySync.merged(existing: once, bundleID: bundle)
+        XCTAssertGreaterThan(addedOnce, 0)
+        XCTAssertEqual(addedTwice, 0)
+        XCTAssertEqual(once[QuickKeySync.namespace] as? [String: String],
+                       twice[QuickKeySync.namespace] as? [String: String])
+    }
+
+    func testSuggestionsCoverEveryPerSiteIntent() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/SiteIntents.swift"), encoding: .utf8)
+        for intentName in QuickKeySync.suggested.keys where intentName != "SearchSiteIntent" {
+            XCTAssertTrue(source.contains("struct \(intentName)"), "suggested quick key for unknown intent \(intentName)")
+        }
+    }
+}
+
 final class DefaultSitesTests: XCTestCase {
     func testIDsAreUnique() {
         let ids = SiteStore.defaults.map(\.id)

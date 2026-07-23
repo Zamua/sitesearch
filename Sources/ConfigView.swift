@@ -7,6 +7,7 @@ struct ConfigView: View {
     @State private var sites: [Site] = SiteStore.load()
     @State private var selection: Site.ID?
     @State private var saveTask: Task<Void, Never>?
+    @State private var syncMessage: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -43,9 +44,19 @@ struct ConfigView: View {
                 }
                 .disabled(selection == nil)
 
+                Button {
+                    let added = QuickKeySync.sync()
+                    syncMessage = added > 0
+                        ? "Added \(added) Spotlight quick keys (g, gh, yt, ...)"
+                        : "All quick keys already assigned"
+                } label: {
+                    Label("Set Up Quick Keys", systemImage: "command.square")
+                }
+                .help("Assigns each site's keyword as its Spotlight quick key, skipping any you've customized")
+
                 Spacer()
 
-                Text("Run \"Search Site\" from Spotlight (Cmd-Space), then assign it a quick key.")
+                Text(syncMessage ?? "Type a quick key in Spotlight (Cmd-Space), e.g. gh query")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
