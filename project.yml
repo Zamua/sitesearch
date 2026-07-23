@@ -10,11 +10,14 @@ targets:
     platform: macOS
     sources:
       - Sources
+    scheme:
+      testTargets:
+        - SiteSearchTests
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zamua.SiteSearch
         PRODUCT_NAME: SiteSearch
-        MARKETING_VERSION: "0.1.0"
+        MARKETING_VERSION: "0.3.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         CODE_SIGN_IDENTITY: "Apple Development"
@@ -25,3 +28,20 @@ targets:
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
         ENABLE_HARDENED_RUNTIME: NO
         COMBINE_HIDPI_IMAGES: YES
+  SiteSearchTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests
+    dependencies:
+      - target: SiteSearch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zamua.SiteSearchTests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 7FDZK7U8A6
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SiteSearch.app/Contents/MacOS/SiteSearch"
+        BUNDLE_LOADER: "$(TEST_HOST)"
