@@ -125,7 +125,7 @@ ever changes rather than corrupting the store.
 ## Signing
 
 `project.yml`: `CODE_SIGN_IDENTITY: "Apple Development"`, automatic style,
-`DEVELOPMENT_TEAM: 7FDZK7U8A6` (Apple ID the team's Apple ID). Ad-hoc is NOT
+`DEVELOPMENT_TEAM: 7FDZK7U8A6` (the account that owns the Developer Program membership). Ad-hoc is NOT
 viable - see Settled below.
 
 Apple Development certs last one year, so this breaks annually. Symptoms:

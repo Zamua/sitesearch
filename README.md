@@ -9,6 +9,15 @@ for the web-search half of Alfred/Raycast.
 Requires macOS 26 (Tahoe). Running App Intents actions from Spotlight is a
 Mac-only macOS 26 feature.
 
+## Install
+
+```sh
+brew install --cask zamua/tap/sitesearch
+```
+
+Or grab the notarized zip from [Releases](https://github.com/Zamua/sitesearch/releases)
+and drag it to /Applications.
+
 ## How it works
 
 The app exposes a single App Intent, "Search Site", with two parameters:
