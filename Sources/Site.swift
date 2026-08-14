@@ -31,17 +31,34 @@ enum SiteStore {
         return base.appendingPathComponent("SiteSearch/sites.json")
     }
 
-    /// STUB (red): runs `body` while holding an exclusive lock on the config,
-    /// so the app and the MCP server cannot interleave read-modify-write.
+    /// Runs `body` while holding an exclusive advisory lock, so the app and the
+    /// MCP server cannot interleave read-modify-write. The lock lives in a
+    /// sidecar file: locking sites.json itself would race with the atomic
+    /// replace in `save`, which swaps the inode out from under the holder.
+    ///
+    /// A lock that cannot be taken (unwritable directory, sandbox denial) must
+    /// not make the app unusable - it degrades to running unlocked.
     static func withLock<T>(at url: URL = fileURL, _ body: () throws -> T) rethrows -> T {
-        try body()
+        let lockURL = url.appendingPathExtension("lock")
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fd = open(lockURL.path, O_CREAT | O_RDWR, 0o644)
+        guard fd >= 0 else { return try body() }
+        defer { close(fd) }
+        guard flock(fd, LOCK_EX) == 0 else { return try body() }
+        defer { flock(fd, LOCK_UN) }
+        return try body()
     }
 
-    /// STUB (red): the only supported way to change the config. Re-reads disk
-    /// under the lock, applies an intent-shaped operation, and persists - so a
-    /// caller holding a stale list cannot erase someone else's write.
+    /// The only supported way to change the config. Re-reads disk under the
+    /// lock, applies an intent-shaped operation, and persists - so a caller
+    /// holding a stale list cannot erase someone else's write. A throwing
+    /// operation leaves the file untouched.
     static func mutate<T>(at url: URL = fileURL, _ body: ([Site]) throws -> ([Site], T)) throws -> T {
-        try body(load(from: url)).1
+        try withLock(at: url) {
+            let (updated, result) = try body(load(from: url))
+            save(updated, to: url)
+            return result
+        }
     }
 
     // Fixed IDs: entity identifiers must be stable across processes (Spotlight

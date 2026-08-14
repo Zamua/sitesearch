@@ -30,31 +30,14 @@ struct SearchSiteIntent: AppIntent {
         return .result()
     }
 
-    /// RFC 3986 unreserved characters, ASCII only. Deliberately narrower than
-    /// .urlQueryAllowed (which passes '&', '=', '+' through raw) and than
-    /// .alphanumerics (Unicode-wide, which would leave non-ASCII un-encoded
-    /// and rely on URL(string:) leniency).
-    private static let queryAllowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
-
+    /// Kept as the app-facing spelling; the implementation lives in SiteURL so
+    /// the MCP server can validate templates without importing AppIntents.
     static func buildURL(template: String, query: String) throws -> URL {
-        guard template.contains("{query}") else {
-            throw SearchSiteError.missingPlaceholder(template)
-        }
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: queryAllowed) ?? query
-        let urlString = template.replacingOccurrences(of: "{query}", with: encoded)
-        guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http" else {
-            throw SearchSiteError.invalidURL(urlString)
-        }
-        return url
+        try SiteURL.build(template: template, query: query)
     }
 }
 
-enum SearchSiteError: Error, CustomLocalizedStringResourceConvertible {
-    case invalidURL(String)
-    case missingPlaceholder(String)
-    case openFailed(String)
-
+extension SearchSiteError: CustomLocalizedStringResourceConvertible {
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .invalidURL(let s):

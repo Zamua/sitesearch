@@ -33,28 +33,78 @@ enum SiteOpError: Error, LocalizedError, Equatable {
 /// one, remove one. Never "replace the whole list" - that is what let a stale
 /// snapshot clobber a concurrent write. `SiteStore.mutate` applies these under
 /// a lock against freshly-read state.
-///
-/// STUB (red): every operation is a no-op returning placeholder values.
 enum SiteOps {
-    /// Looks a site up by id string or by keyword (case-insensitive).
+    /// Looks a site up by id string or by keyword (case-insensitive). Agents
+    /// tend to have the keyword to hand; the UI has the id.
     static func find(_ sites: [Site], _ selector: String) -> Site? {
-        _ = selector
-        return nil
+        let needle = selector.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return nil }
+        return sites.first { $0.id.uuidString.lowercased() == needle }
+            ?? sites.first { $0.keyword.lowercased() == needle }
     }
 
     static func validate(name: String, keyword: String, template: String) throws {
-        _ = (name, keyword, template)
+        guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { throw SiteOpError.emptyName }
+        guard !keyword.trimmingCharacters(in: .whitespaces).isEmpty else { throw SiteOpError.emptyKeyword }
+        try validate(template: template)
+    }
+
+    /// Templates are validated with the same builder the search itself uses, so
+    /// a site that stores successfully cannot fail only at search time.
+    static func validate(template: String) throws {
+        do {
+            _ = try SiteURL.build(template: template, query: "probe")
+        } catch SearchSiteError.missingPlaceholder {
+            throw SiteOpError.missingPlaceholder(template)
+        } catch {
+            throw SiteOpError.invalidTemplate(template)
+        }
+    }
+
+    private static func assertKeywordFree(_ keyword: String, in sites: [Site], excluding id: UUID? = nil) throws {
+        let needle = keyword.trimmingCharacters(in: .whitespaces).lowercased()
+        let clash = sites.contains { $0.keyword.lowercased() == needle && $0.id != id }
+        if clash { throw SiteOpError.keywordTaken(keyword) }
     }
 
     static func add(to sites: [Site], name: String, keyword: String, template: String) throws -> (sites: [Site], added: Site) {
-        (sites, Site(keyword: "", name: "", template: ""))
+        try validate(name: name, keyword: keyword, template: template)
+        try assertKeywordFree(keyword, in: sites)
+        let site = Site(
+            keyword: keyword.trimmingCharacters(in: .whitespaces),
+            name: name.trimmingCharacters(in: .whitespaces),
+            template: template.trimmingCharacters(in: .whitespaces)
+        )
+        return (sites + [site], site)
     }
 
+    /// nil means "leave this field alone" - the write carries only what the
+    /// caller actually intends to change.
     static func update(in sites: [Site], selector: String, name: String?, keyword: String?, template: String?) throws -> (sites: [Site], updated: Site) {
-        (sites, Site(keyword: "", name: "", template: ""))
+        guard let existing = find(sites, selector), let index = sites.firstIndex(where: { $0.id == existing.id }) else {
+            throw SiteOpError.notFound(selector)
+        }
+        var site = existing
+        if let name {
+            guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { throw SiteOpError.emptyName }
+            site.name = name.trimmingCharacters(in: .whitespaces)
+        }
+        if let keyword {
+            guard !keyword.trimmingCharacters(in: .whitespaces).isEmpty else { throw SiteOpError.emptyKeyword }
+            try assertKeywordFree(keyword, in: sites, excluding: site.id)
+            site.keyword = keyword.trimmingCharacters(in: .whitespaces)
+        }
+        if let template {
+            try validate(template: template)
+            site.template = template.trimmingCharacters(in: .whitespaces)
+        }
+        var result = sites
+        result[index] = site
+        return (result, site)
     }
 
     static func remove(from sites: [Site], selector: String) throws -> (sites: [Site], removed: Site) {
-        (sites, Site(keyword: "", name: "", template: ""))
+        guard let existing = find(sites, selector) else { throw SiteOpError.notFound(selector) }
+        return (sites.filter { $0.id != existing.id }, existing)
     }
 }
