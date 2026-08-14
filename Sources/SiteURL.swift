@@ -10,6 +10,18 @@ enum SiteURL {
     /// and rely on URL(string:) leniency).
     private static let queryAllowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
+    /// Whether a template is a search (has the placeholder) or a bookmark
+    /// (a plain URL to open as-is).
+    static func requiresQuery(_ template: String) -> Bool {
+        template.contains("{query}")
+    }
+
+    /// STUB (red): resolves either kind - substituting into a search template,
+    /// or returning a bookmark URL untouched.
+    static func resolve(template: String, query: String?) throws -> URL {
+        try build(template: template, query: query ?? "")
+    }
+
     static func build(template: String, query: String) throws -> URL {
         guard template.contains("{query}") else {
             throw SearchSiteError.missingPlaceholder(template)

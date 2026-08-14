@@ -367,6 +367,65 @@ final class SiteStoreMutationTests: XCTestCase {
     }
 }
 
+/// A bookmark is a site whose template has no {query}: `ss repo1` opens it
+/// directly instead of asking what to search for.
+final class BookmarkTests: XCTestCase {
+    private let bookmark = "https://github.com/zamua/sitesearch"
+    private let search = "https://github.com/search?q={query}"
+
+    func testTemplateKindIsInferredFromThePlaceholder() {
+        XCTAssertTrue(SiteURL.requiresQuery(search))
+        XCTAssertFalse(SiteURL.requiresQuery(bookmark))
+    }
+
+    func testResolvingABookmarkOpensItUntouched() throws {
+        let url = try SiteURL.resolve(template: bookmark, query: nil)
+        XCTAssertEqual(url.absoluteString, bookmark)
+    }
+
+    /// Whatever the user typed after the keyword is irrelevant to a bookmark;
+    /// it must not be appended or silently turn the URL into nonsense.
+    func testABookmarkIgnoresAnyQuery() throws {
+        let url = try SiteURL.resolve(template: bookmark, query: "ignored text")
+        XCTAssertEqual(url.absoluteString, bookmark)
+    }
+
+    func testResolvingASearchSubstitutesTheQuery() throws {
+        let url = try SiteURL.resolve(template: search, query: "hello world")
+        XCTAssertEqual(url.absoluteString, "https://github.com/search?q=hello%20world")
+    }
+
+    /// Return pressed with no query: open the search page empty rather than
+    /// failing, which is what a browser does anyway.
+    func testASearchWithNoQueryResolvesToTheBareSearchPage() throws {
+        let url = try SiteURL.resolve(template: search, query: nil)
+        XCTAssertEqual(url.absoluteString, "https://github.com/search?q=")
+    }
+
+    func testBookmarksMustStillBeHTTPURLs() {
+        XCTAssertThrowsError(try SiteURL.resolve(template: "file:///etc/passwd", query: nil))
+        XCTAssertThrowsError(try SiteURL.resolve(template: "not a url", query: nil))
+    }
+
+    func testSiteOpsAcceptsABookmarkTemplate() throws {
+        let (sites, added) = try SiteOps.add(to: SiteStore.defaults, name: "SiteSearch Repo", keyword: "repo1", template: bookmark)
+        XCTAssertEqual(added.template, bookmark)
+        XCTAssertEqual(sites.count, SiteStore.defaults.count + 1)
+    }
+
+    /// Search and bookmark keywords share one namespace and one dropdown, so
+    /// `ss repo` should surface the search and both bookmarks together.
+    func testSearchesAndBookmarksFilterTogether() {
+        let sites = [
+            Site(keyword: "repo", name: "GitHub Repos", template: search),
+            Site(keyword: "repo1", name: "SiteSearch", template: bookmark),
+            Site(keyword: "repo2", name: "Other", template: "https://github.com/zamua/other"),
+        ]
+        XCTAssertEqual(SiteEntityQuery.filter(sites, matching: "repo").count, 3)
+        XCTAssertEqual(SiteEntityQuery.filter(sites, matching: "repo1").count, 1)
+    }
+}
+
 /// Guards the settings a public release depends on. These drift silently and
 /// only bite at notarization or install time, which is far too late.
 final class ReleaseConfigTests: XCTestCase {
