@@ -17,10 +17,22 @@ struct MCPHandler {
 
     let storeURL: URL
     let opener: @Sendable (URL) -> Bool
+    /// Injected so tests never touch the network. STUB (red): not called yet.
+    let iconFetch: @Sendable (URL) -> Data?
 
-    init(storeURL: URL = SiteStore.fileURL, opener: @escaping @Sendable (URL) -> Bool = MCPHandler.openInBrowser) {
+    /// Icons live beside whichever config this handler is pointed at.
+    var iconDirectory: URL {
+        storeURL.deletingLastPathComponent().appendingPathComponent("icons")
+    }
+
+    init(
+        storeURL: URL = SiteStore.fileURL,
+        opener: @escaping @Sendable (URL) -> Bool = MCPHandler.openInBrowser,
+        iconFetch: @escaping @Sendable (URL) -> Data? = Favicon.download
+    ) {
         self.storeURL = storeURL
         self.opener = opener
+        self.iconFetch = iconFetch
     }
 
     /// Opens a URL in the default browser. A CLI has no NSWorkspace worth

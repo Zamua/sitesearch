@@ -62,6 +62,7 @@ targets:
     sources:
       - Sources/MCPMain
       - Sources/MCPHandler.swift
+      - Sources/Favicon.swift
       - Sources/Site.swift
       - Sources/SiteOps.swift
       - Sources/SiteURL.swift

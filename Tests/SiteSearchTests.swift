@@ -574,11 +574,23 @@ final class OpenRecorder: @unchecked Sendable {
     }
 }
 
+/// Stands in for the network so icon fetching is testable offline.
+final class FakeNetwork: @unchecked Sendable {
+    var response: Data?
+    private(set) var requested: [URL] = []
+    func fetch(_ url: URL) -> Data? {
+        requested.append(url)
+        return response
+    }
+}
+
 final class MCPHandlerTests: XCTestCase {
     private var tmp: URL!
     private var recorder: OpenRecorder!
+    private var network: FakeNetwork!
     private var handler: MCPHandler!
     private var file: URL { tmp.appendingPathComponent("sites.json") }
+    private var iconDir: URL { tmp.appendingPathComponent("icons") }
 
     override func setUpWithError() throws {
         tmp = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -586,8 +598,14 @@ final class MCPHandlerTests: XCTestCase {
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
         SiteStore.save(SiteStore.defaults, to: file)
         let recorder = OpenRecorder()
+        let network = FakeNetwork()
         self.recorder = recorder
-        handler = MCPHandler(storeURL: file, opener: { recorder.record($0) })
+        self.network = network
+        handler = MCPHandler(
+            storeURL: file,
+            opener: { recorder.record($0) },
+            iconFetch: { network.fetch($0) }
+        )
     }
 
     override func tearDownWithError() throws {
@@ -717,6 +735,66 @@ final class MCPHandlerTests: XCTestCase {
     func testMissingRequiredArgumentIsAToolError() throws {
         let (_, isError) = try callTool("add_site", ["name": "No Keyword"])
         XCTAssertTrue(isError)
+    }
+
+    // MARK: favicons
+
+    private func addedSiteID(_ text: String) throws -> UUID {
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        return try XCTUnwrap(UUID(uuidString: try XCTUnwrap(json["id"] as? String)))
+    }
+
+    func testAddSiteCachesTheSitesIcon() throws {
+        network.response = Data("PNGBYTES".utf8)
+        let (text, isError) = try callTool("add_site", [
+            "name": "Hacker News", "keyword": "hn", "template": "https://hn.algolia.com/?q={query}",
+        ])
+        XCTAssertFalse(isError, text)
+        let id = try addedSiteID(text)
+        XCTAssertEqual(Favicon.cachedData(for: id, in: iconDir), Data("PNGBYTES".utf8))
+        XCTAssertEqual(network.requested.first?.absoluteString, "https://hn.algolia.com/favicon.ico")
+    }
+
+    /// A site whose icon cannot be fetched is still a perfectly good site.
+    func testAddSiteSucceedsWhenTheIconCannotBeFetched() throws {
+        network.response = nil
+        let (text, isError) = try callTool("add_site", [
+            "name": "Hacker News", "keyword": "hn", "template": "https://hn.algolia.com/?q={query}",
+        ])
+        XCTAssertFalse(isError, text)
+        XCTAssertNotNil(SiteOps.find(SiteStore.load(from: file), "hn"))
+        XCTAssertNil(Favicon.cachedData(for: try addedSiteID(text), in: iconDir))
+    }
+
+    func testChangingATemplateRefetchesTheIcon() throws {
+        network.response = Data("OLD".utf8)
+        let (addText, _) = try callTool("add_site", [
+            "name": "Site", "keyword": "s1", "template": "https://one.example/?q={query}",
+        ])
+        let id = try addedSiteID(addText)
+        XCTAssertEqual(Favicon.cachedData(for: id, in: iconDir), Data("OLD".utf8))
+
+        network.response = Data("NEW".utf8)
+        let (text, isError) = try callTool("update_site", [
+            "site": "s1", "template": "https://two.example/?q={query}",
+        ])
+        XCTAssertFalse(isError, text)
+        XCTAssertEqual(Favicon.cachedData(for: id, in: iconDir), Data("NEW".utf8),
+                       "icon should be refetched when the origin changes")
+        XCTAssertEqual(network.requested.last?.absoluteString, "https://two.example/favicon.ico")
+    }
+
+    func testRenamingASiteDoesNotRefetchTheIcon() throws {
+        network.response = Data("ICON".utf8)
+        let (addText, _) = try callTool("add_site", [
+            "name": "Site", "keyword": "s1", "template": "https://one.example/?q={query}",
+        ])
+        _ = try addedSiteID(addText)
+        let before = network.requested.count
+
+        let (_, isError) = try callTool("update_site", ["site": "s1", "name": "Renamed"])
+        XCTAssertFalse(isError)
+        XCTAssertEqual(network.requested.count, before, "a rename should not hit the network")
     }
 }
 
