@@ -367,6 +367,52 @@ final class SiteStoreMutationTests: XCTestCase {
     }
 }
 
+/// Guards the settings a public release depends on. These drift silently and
+/// only bite at notarization or install time, which is far too late.
+final class ReleaseConfigTests: XCTestCase {
+    private var root: URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    }
+
+    private func read(_ path: String) throws -> String {
+        try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+    }
+
+    /// The bundle reported 1.0 for every release from 0.7.0 on, because the
+    /// custom Info.plist hardcoded it. Homebrew and bug reports both read this.
+    func testInfoPlistTracksTheBuildSettingVersions() throws {
+        let plist = try read("Sources/Info.plist")
+        XCTAssertTrue(plist.contains("$(MARKETING_VERSION)"),
+                      "CFBundleShortVersionString must follow MARKETING_VERSION, not a literal")
+        XCTAssertTrue(plist.contains("$(CURRENT_PROJECT_VERSION)"),
+                      "CFBundleVersion must follow CURRENT_PROJECT_VERSION, not a literal")
+    }
+
+    /// Homebrew's `depends_on macos:` and the installer both read this, and the
+    /// app genuinely cannot run below 26.
+    func testInfoPlistDeclaresTheMinimumSystemVersion() throws {
+        let plist = try read("Sources/Info.plist")
+        XCTAssertTrue(plist.contains("LSMinimumSystemVersion"), "missing LSMinimumSystemVersion")
+        XCTAssertTrue(plist.contains("26.0"), "minimum system version should be macOS 26")
+    }
+
+    /// Notarization rejects anything without the hardened runtime.
+    func testHardenedRuntimeIsEnabled() throws {
+        let project = try read("project.yml")
+        XCTAssertFalse(project.contains("ENABLE_HARDENED_RUNTIME: NO"),
+                       "notarization requires the hardened runtime")
+        XCTAssertTrue(project.contains("ENABLE_HARDENED_RUNTIME: YES"))
+    }
+
+    /// The embedded MCP binary is a second executable inside the bundle; if it
+    /// is not signed on copy, notarization fails on the nested code.
+    func testEmbeddedToolIsCodeSignedOnCopy() throws {
+        let project = try read("project.yml")
+        XCTAssertTrue(project.contains("codeSign: true"),
+                      "the copied sitesearch-mcp must be signed, or notarization rejects the bundle")
+    }
+}
+
 final class FaviconTests: XCTestCase {
     private var tmp: URL!
 
