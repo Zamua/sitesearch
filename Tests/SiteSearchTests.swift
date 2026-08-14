@@ -229,9 +229,11 @@ final class SiteOpsTests: XCTestCase {
         XCTAssertFalse(base.map(\.id).contains(added.id), "reused an existing id")
     }
 
-    func testAddRejectsTemplateWithoutPlaceholder() {
-        assertThrows(.missingPlaceholder("https://x.example/?q=")) {
-            _ = try SiteOps.add(to: base, name: "X", keyword: "x", template: "https://x.example/?q=")
+    /// A template without {query} is a bookmark now, not an error - so the
+    /// storage layer only rejects things that are not URLs at all.
+    func testAddRejectsATemplateThatIsNotAURL() {
+        assertThrows(.invalidTemplate("not a url")) {
+            _ = try SiteOps.add(to: base, name: "X", keyword: "x", template: "not a url")
         }
     }
 
@@ -281,9 +283,17 @@ final class SiteOpsTests: XCTestCase {
     }
 
     func testUpdateValidatesANewTemplate() {
-        assertThrows(.missingPlaceholder("https://x.example/")) {
-            _ = try SiteOps.update(in: base, selector: "code", name: nil, keyword: nil, template: "https://x.example/")
+        assertThrows(.invalidTemplate("not a url")) {
+            _ = try SiteOps.update(in: base, selector: "code", name: nil, keyword: nil, template: "not a url")
         }
+    }
+
+    /// Turning a search into a bookmark by dropping the placeholder is a legal
+    /// edit, not a validation failure.
+    func testUpdateCanConvertASearchIntoABookmark() throws {
+        let (_, updated) = try SiteOps.update(in: base, selector: "code", name: nil, keyword: nil,
+                                              template: "https://github.com/zamua")
+        XCTAssertEqual(updated.template, "https://github.com/zamua")
     }
 
     func testUpdateUnknownSelectorThrows() {
@@ -355,7 +365,7 @@ final class SiteStoreMutationTests: XCTestCase {
     func testFailedMutationLeavesTheFileUntouched() throws {
         SiteStore.save(SiteStore.defaults, to: file)
         XCTAssertThrowsError(try SiteStore.mutate(at: file) {
-            try SiteOps.add(to: $0, name: "Bad", keyword: "bad", template: "https://x.example/")
+            try SiteOps.add(to: $0, name: "Bad", keyword: "bad", template: "not a url")
         })
         XCTAssertEqual(SiteStore.load(from: file).count, SiteStore.defaults.count)
     }
@@ -771,7 +781,7 @@ final class MCPHandlerTests: XCTestCase {
         let result = try XCTUnwrap(response["result"] as? [String: Any])
         let tools = try XCTUnwrap(result["tools"] as? [[String: Any]])
         let names = Set(tools.compactMap { $0["name"] as? String })
-        XCTAssertEqual(names, ["list_sites", "add_site", "update_site", "remove_site", "search_site"])
+        XCTAssertEqual(names, ["list_sites", "add_site", "add_bookmark", "update_site", "remove_site", "search_site"])
         for tool in tools {
             XCTAssertNotNil(tool["description"] as? String, "\(tool["name"] ?? "?") needs a description")
             XCTAssertNotNil(tool["inputSchema"] as? [String: Any], "\(tool["name"] ?? "?") needs an inputSchema")
@@ -809,6 +819,37 @@ final class MCPHandlerTests: XCTestCase {
         XCTAssertTrue(isError)
         XCTAssertTrue(text.contains("{query}"), "error should name the missing placeholder: \(text)")
         XCTAssertEqual(SiteStore.load(from: file).count, SiteStore.defaults.count, "failed add wrote anyway")
+    }
+
+    // MARK: bookmarks
+
+    func testAddBookmarkStoresAURLWithNoPlaceholder() throws {
+        let (text, isError) = try callTool("add_bookmark", [
+            "name": "SiteSearch Repo", "keyword": "repo1", "template": "https://github.com/zamua/sitesearch",
+        ])
+        XCTAssertFalse(isError, text)
+        let stored = try XCTUnwrap(SiteOps.find(SiteStore.load(from: file), "repo1"))
+        XCTAssertEqual(stored.template, "https://github.com/zamua/sitesearch")
+    }
+
+    /// The two tools exist so an agent states which kind it means; mixing them
+    /// up should say so rather than quietly storing the wrong thing.
+    func testAddBookmarkRejectsASearchTemplate() throws {
+        let (text, isError) = try callTool("add_bookmark", [
+            "name": "Nope", "keyword": "nope", "template": "https://github.com/search?q={query}",
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(text.contains("{query}"), "error should explain the mix-up: \(text)")
+        XCTAssertNil(SiteOps.find(SiteStore.load(from: file), "nope"))
+    }
+
+    func testOpeningABookmarkIgnoresAnyQuery() throws {
+        _ = try callTool("add_bookmark", [
+            "name": "SiteSearch Repo", "keyword": "repo1", "template": "https://github.com/zamua/sitesearch",
+        ])
+        let (_, isError) = try callTool("search_site", ["site": "repo1", "query": "ignored"])
+        XCTAssertFalse(isError)
+        XCTAssertEqual(recorder.urls.map(\.absoluteString), ["https://github.com/zamua/sitesearch"])
     }
 
     func testAddSiteRejectsADuplicateKeyword() throws {

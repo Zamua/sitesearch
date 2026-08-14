@@ -4,15 +4,19 @@ import AppKit
 /// The Spotlight action: "Search <site> for <query>". Runs in the background
 /// (no app window) and opens the templated search URL in the default browser.
 struct SearchSiteIntent: AppIntent {
-    static let title: LocalizedStringResource = "Search Site"
-    static let description = IntentDescription("Search a configured website in your default browser.")
+    // The TYPE name is load-bearing - the Spotlight quick-key store keys on
+    // "<bundle-id>.SearchSiteIntent" - but this display title is free to change.
+    static let title: LocalizedStringResource = "Search or Open Site"
+    static let description = IntentDescription("Search a configured website, or open a saved bookmark, in your default browser.")
     static let supportedModes: IntentModes = .background
 
     @Parameter(title: "Site")
     var site: SiteEntity
 
+    // Optional: a bookmark has nothing to search for, so `ss repo1` should run
+    // on Return rather than stopping to demand a query.
     @Parameter(title: "Query")
-    var query: String
+    var query: String?
 
     // Every required no-default parameter MUST appear here, or the action is
     // silently excluded from Spotlight. Site comes first so text typed right
@@ -23,7 +27,7 @@ struct SearchSiteIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        let url = try Self.buildURL(template: site.template, query: query)
+        let url = try SiteURL.resolve(template: site.template, query: query)
         guard NSWorkspace.shared.open(url) else {
             throw SearchSiteError.openFailed(url.absoluteString)
         }

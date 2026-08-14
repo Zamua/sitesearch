@@ -49,11 +49,15 @@ enum SiteOps {
         try validate(template: template)
     }
 
-    /// Templates are validated with the same builder the search itself uses, so
-    /// a site that stores successfully cannot fail only at search time.
+    /// Templates are validated with the same resolver the search itself uses,
+    /// so a site that stores successfully cannot fail only at search time.
+    ///
+    /// Both kinds are accepted: with {query} it is a search, without it is a
+    /// bookmark. Callers needing one specific kind (the MCP tools) check
+    /// `SiteURL.requiresQuery` themselves so their error names the mistake.
     static func validate(template: String) throws {
         do {
-            _ = try SiteURL.build(template: template, query: "probe")
+            _ = try SiteURL.resolve(template: template, query: "probe")
         } catch SearchSiteError.missingPlaceholder {
             throw SiteOpError.missingPlaceholder(template)
         } catch {

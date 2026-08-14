@@ -16,10 +16,21 @@ enum SiteURL {
         template.contains("{query}")
     }
 
-    /// STUB (red): resolves either kind - substituting into a search template,
-    /// or returning a bookmark URL untouched.
+    /// Resolves either kind: substitutes into a search template, or returns a
+    /// bookmark's URL untouched. A search with no query resolves to the bare
+    /// search page rather than failing - the same thing a browser would do.
     static func resolve(template: String, query: String?) throws -> URL {
-        try build(template: template, query: query ?? "")
+        guard requiresQuery(template) else { return try validated(template) }
+        return try build(template: template, query: query ?? "")
+    }
+
+    /// A bookmark carries no placeholder, so there is nothing to encode - but
+    /// it still has to be a real http(s) URL.
+    private static func validated(_ template: String) throws -> URL {
+        guard let url = URL(string: template), let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http", url.host?.isEmpty == false
+        else { throw SearchSiteError.invalidURL(template) }
+        return url
     }
 
     static func build(template: String, query: String) throws -> URL {
