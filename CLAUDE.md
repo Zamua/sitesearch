@@ -141,7 +141,7 @@ stale one if a build ever complains about ambiguity.
 
 - `make build` - xcodegen (via nix) + xcodebuild Release into `.build/`.
   The .xcodeproj is generated; project.yml is the source of truth.
-- `make test` - 57 unit tests (URL building, defaults integrity, quick-key
+- `make test` - 63 unit tests (URL building, defaults integrity, quick-key
   merge + legacy pruning, slot-config migration, entity filtering, site
   operations, locked mutation, MCP protocol + tools, share/import round-trip).
   Note the test host IS the app binary, so a trap inside a test (a force
@@ -204,10 +204,14 @@ fix this; a transaction makes the overwrite atomic, not correct.
    locking sites.json itself would race with the atomic replace in `save`,
    which swaps the inode out from under the holder. A lock that cannot be
    taken degrades to running unlocked rather than bricking the app.
-3. TODO - `ConfigView` still holds the whole list in `@State` and saves all of
-   it on a 400ms debounce, so the window remains the one component that can
-   clobber an agent's write. It needs a file watch plus per-field writes
-   through `SiteOps`.
+3. DONE - `ConfigView` still holds the whole list in `@State` (SwiftUI's Table
+   needs it) but never writes it back wholesale. `SiteReconcile.apply` is a
+   three-way merge of (window's edits, baseline it last saw, fresh disk),
+   applied inside `mutate`. Membership in baseline separates "the window added
+   this" from "someone else deleted this"; per-field comparison separates "the
+   window changed this" from "keep the external value". A 1.5s poll of the
+   file's mtime pulls in external edits while the window sits open, with
+   `seenStamp` so our own saves are not mistaken for someone else's.
 
 ## Known unknowns (prototype findings go here)
 

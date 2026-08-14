@@ -3,13 +3,28 @@ import SwiftUI
 /// The config window: edit the list of sites Spotlight can search.
 /// Changes save to disk immediately; the intent reads the file fresh on
 /// every invocation, so there is no sync step.
+///
+/// The window is not the only writer - the MCP server edits the same file - so
+/// it never writes its `@State` list back wholesale. `baseline` records what it
+/// last saw, saves reconcile against fresh disk state under the store's lock,
+/// and a poll picks up external changes while the window is open.
 struct ConfigView: View {
     @State private var sites: [Site] = SiteStore.load()
+    @State private var baseline: [Site] = []
     @State private var selection: Site.ID?
     @State private var saveTask: Task<Void, Never>?
     @State private var syncMessage: String?
     @State private var showingExport = false
     @State private var importEntries: [SiteExchange.Entry]?
+    /// Modification stamp of the last write we know about, so our own saves
+    /// are not mistaken for someone else's edit.
+    @State private var seenStamp: Date?
+
+    private let pollTimer = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
+
+    private static func stamp(of url: URL) -> Date? {
+        try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -61,6 +76,10 @@ struct ConfigView: View {
             }
             .padding(12)
         }
+        .onAppear {
+            baseline = sites
+            seenStamp = Self.stamp(of: SiteStore.fileURL)
+        }
         .onChange(of: sites) {
             // Debounced: a save per keystroke is needless disk churn and
             // widens the window where Spotlight reads a half-typed template.
@@ -68,10 +87,21 @@ struct ConfigView: View {
             saveTask = Task {
                 try? await Task.sleep(for: .milliseconds(400))
                 guard !Task.isCancelled else { return }
-                // Assign back so in-memory state carries the allocated slots
-                // (equal values terminate the onChange cycle).
-                sites = SiteStore.save(sites)
+                save()
             }
+        }
+        .onReceive(pollTimer) { _ in
+            // Someone else (the MCP server) may have written while the window
+            // sat open. Merge their changes in rather than overwriting them on
+            // the next keystroke.
+            let current = Self.stamp(of: SiteStore.fileURL)
+            guard current != seenStamp else { return }
+            seenStamp = current
+            let merged = SiteReconcile.apply(edited: sites, baseline: baseline, disk: SiteStore.load())
+            guard merged != sites else { return }
+            saveTask?.cancel()
+            sites = merged
+            baseline = merged
         }
         .sheet(isPresented: $showingExport) {
             ExportSheet(sites: sites)
@@ -82,7 +112,8 @@ struct ConfigView: View {
         )) { payload in
             ImportSheet(entries: payload.entries) { chosen in
                 let (merged, added) = SiteExchange.merge(chosen, into: sites)
-                sites = SiteStore.save(merged)
+                sites = merged
+                save()
                 syncMessage = "Imported \(added) site\(added == 1 ? "" : "s")"
             }
         }
@@ -97,6 +128,20 @@ struct ConfigView: View {
     private struct ImportPayload: Identifiable {
         var entries: [SiteExchange.Entry]
         var id: String { entries.map(\.id).joined(separator: ",") }
+    }
+
+    /// Reconciles this window's edits against fresh disk state under the
+    /// store's lock, so a site added by an agent is never overwritten.
+    private func save() {
+        let edited = sites
+        let base = baseline
+        let written = (try? SiteStore.mutate { disk in
+            let result = SiteReconcile.apply(edited: edited, baseline: base, disk: disk)
+            return (result, result)
+        }) ?? edited
+        sites = written
+        baseline = written
+        seenStamp = Self.stamp(of: SiteStore.fileURL)
     }
 
     private func binding(for id: Site.ID, _ keyPath: WritableKeyPath<Site, String>) -> Binding<String> {
