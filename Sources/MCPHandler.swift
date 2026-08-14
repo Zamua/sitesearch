@@ -17,7 +17,7 @@ struct MCPHandler {
 
     let storeURL: URL
     let opener: @Sendable (URL) -> Bool
-    /// Injected so tests never touch the network. STUB (red): not called yet.
+    /// Injected so tests never touch the network.
     let iconFetch: @Sendable (URL) -> Data?
 
     /// Icons live beside whichever config this handler is pointed at.
@@ -112,17 +112,31 @@ struct MCPHandler {
                     template: try string(args, "template")
                 )
             }
+            // Best-effort: a site whose icon will not load is still a good site.
+            Favicon.ensureCached(for: added, in: iconDirectory, fetch: iconFetch)
             return try encode(Self.describe(added))
 
         case "update_site":
+            let selector = try string(args, "site")
+            let newTemplate = args["template"] as? String
+            let previousOrigin = newTemplate.flatMap { _ in
+                SiteOps.find(SiteStore.load(from: storeURL), selector)
+                    .flatMap { Favicon.origin(forTemplate: $0.template) }
+            }
             let updated = try SiteStore.mutate(at: storeURL) {
                 try SiteOps.update(
                     in: $0,
-                    selector: try string(args, "site"),
+                    selector: selector,
                     name: args["name"] as? String,
                     keyword: args["keyword"] as? String,
-                    template: args["template"] as? String
+                    template: newTemplate
                 )
+            }
+            // Only re-fetch when the icon could actually have changed - a
+            // rename should not hit the network.
+            if let newTemplate, Favicon.origin(forTemplate: newTemplate) != previousOrigin {
+                Favicon.invalidate(updated.id, in: iconDirectory)
+                Favicon.ensureCached(for: updated, in: iconDirectory, fetch: iconFetch)
             }
             return try encode(Self.describe(updated))
 
@@ -130,6 +144,7 @@ struct MCPHandler {
             let removed = try SiteStore.mutate(at: storeURL) {
                 try SiteOps.remove(from: $0, selector: try string(args, "site"))
             }
+            Favicon.invalidate(removed.id, in: iconDirectory)
             return try encode(Self.describe(removed))
 
         case "search_site":

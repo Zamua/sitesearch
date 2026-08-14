@@ -21,6 +21,10 @@ Sites live in `~/Library/Application Support/SiteSearch/sites.json` as plain
 JSON (version-control it if you like). The URL template uses the literal
 placeholder `{query}`, e.g. `https://github.com/search?q={query}`.
 
+Each site's favicon is fetched from that site's own origin when you add it -
+never through a third-party favicon service - and cached alongside the config
+in `icons/`. Sites without a reachable icon fall back to a plain glyph.
+
 ## Agent access (MCP)
 
 The bundle ships a stdio MCP server so an agent can manage sites without the

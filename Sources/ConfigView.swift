@@ -19,6 +19,8 @@ struct ConfigView: View {
     /// Modification stamp of the last write we know about, so our own saves
     /// are not mistaken for someone else's edit.
     @State private var seenStamp: Date?
+    /// Bumped when background icon fetches finish, to redraw the rows.
+    @State private var iconGeneration = 0
 
     private let pollTimer = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
 
@@ -29,6 +31,10 @@ struct ConfigView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Table(sites, selection: $selection) {
+                TableColumn("") { site in
+                    SiteIcon(site: site, generation: iconGeneration)
+                }
+                .width(20)
                 TableColumn("Name") { site in
                     TextField("Name", text: binding(for: site.id, \.name))
                 }
@@ -79,6 +85,7 @@ struct ConfigView: View {
         .onAppear {
             baseline = sites
             seenStamp = Self.stamp(of: SiteStore.fileURL)
+            refreshIcons(previous: [], current: sites)
         }
         .onChange(of: sites) {
             // Debounced: a save per keystroke is needless disk churn and
@@ -125,6 +132,26 @@ struct ConfigView: View {
         }
     }
 
+    /// A site's cached favicon, or a neutral glyph. `generation` exists purely
+    /// to force a redraw when a background fetch lands, since the bytes live on
+    /// disk rather than in view state.
+    private struct SiteIcon: View {
+        let site: Site
+        let generation: Int
+
+        var body: some View {
+            if let data = Favicon.cachedData(for: site.id), let image = NSImage(data: data) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private struct ImportPayload: Identifiable {
         var entries: [SiteExchange.Entry]
         var id: String { entries.map(\.id).joined(separator: ",") }
@@ -142,6 +169,33 @@ struct ConfigView: View {
         sites = written
         baseline = written
         seenStamp = Self.stamp(of: SiteStore.fileURL)
+        refreshIcons(previous: base, current: written)
+    }
+
+    /// Fetches any missing favicons off the main thread. Never blocks the UI,
+    /// and never runs while Spotlight is drawing - the entity reads whatever
+    /// is already cached.
+    private func refreshIcons(previous: [Site], current: [Site]) {
+        let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var wanted: [Site] = []
+        for site in current {
+            if let old = previousByID[site.id],
+               Favicon.origin(forTemplate: old.template) != Favicon.origin(forTemplate: site.template) {
+                Favicon.invalidate(site.id)
+            }
+            if Favicon.cachedData(for: site.id) == nil { wanted.append(site) }
+        }
+        guard !wanted.isEmpty else { return }
+        let targets = wanted
+        Task.detached(priority: .utility) {
+            var fetched = false
+            for site in targets where Favicon.ensureCached(for: site, fetch: Favicon.download) {
+                fetched = true
+            }
+            if fetched {
+                await MainActor.run { iconGeneration += 1 }
+            }
+        }
     }
 
     private func binding(for id: Site.ID, _ keyPath: WritableKeyPath<Site, String>) -> Binding<String> {

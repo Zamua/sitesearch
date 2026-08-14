@@ -42,6 +42,16 @@ Config changes and agent access:
 - `Sources/SiteURL.swift` - `SiteURL.build` + `SearchSiteError`, Foundation
   only, so the CLI can validate without importing AppIntents.
   `SearchSiteIntent.buildURL` forwards to it.
+- `Sources/Favicon.swift` - fetches each site's icon FROM ITS OWN ORIGIN (a
+  third-party favicon proxy would report every configured site to someone
+  else), caching bytes at `icons/<site-uuid>` so `sites.json` stays clean
+  JSON. Tries `/favicon.ico`, then parses the page's `<link rel="...icon...">`
+  tags with a regex - one attribute out of <head> does not justify an HTML
+  parser. Fetching happens on add and on template change ONLY, never on
+  rename and never at draw time: `displayRepresentation` is synchronous, so a
+  network call there would stall the Spotlight dropdown. The fetcher is
+  injected so tests run offline. Verified live: Google/GitHub return `.ico`,
+  hn.algolia.com falls through to a declared PNG, and NSImage decodes both.
 - `Sources/MCPHandler.swift` - the MCP server as a pure function of (request,
   config URL), with an injectable `opener` so `search_site` is testable without
   launching a browser. Shared by both targets so the unit tests can reach it.
@@ -141,7 +151,7 @@ stale one if a build ever complains about ambiguity.
 
 - `make build` - xcodegen (via nix) + xcodebuild Release into `.build/`.
   The .xcodeproj is generated; project.yml is the source of truth.
-- `make test` - 63 unit tests (URL building, defaults integrity, quick-key
+- `make test` - 80 unit tests (URL building, defaults integrity, quick-key
   merge + legacy pruning, slot-config migration, entity filtering, site
   operations, locked mutation, MCP protocol + tools, share/import round-trip).
   Note the test host IS the app binary, so a trap inside a test (a force
