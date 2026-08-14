@@ -51,17 +51,24 @@ final class BuildURLTests: XCTestCase {
 final class QuickKeySyncTests: XCTestCase {
     let bundle = "com.zamua.SiteSearch"
 
-    func testDesiredIsExactlyTheSingleSearchAction() {
-        XCTAssertEqual(QuickKeySync.desired(bundleID: bundle),
-                       ["\(bundle).SearchSiteIntent": "ss"])
+    /// Two actions, two keys: searches need a query, bookmarks must not be
+    /// asked for one. Spotlight cannot vary a summary per entity, so the split
+    /// has to happen at the action level.
+    func testDesiredRegistersBothActions() {
+        XCTAssertEqual(QuickKeySync.desired(bundleID: bundle), [
+            "\(bundle).SearchSiteIntent": "ss",
+            "\(bundle).OpenBookmarkIntent": "sb",
+        ])
     }
 
-    func testMergeInstallsOnlyOurSingleEntry() {
+    func testMergeInstallsBothEntries() {
         let want = QuickKeySync.desired(bundleID: bundle)
         let (store, changed) = QuickKeySync.merged(existing: nil, desired: want, bundleID: bundle)
         XCTAssertTrue(changed)
-        XCTAssertEqual(store[QuickKeySync.namespace] as? [String: String],
-                       ["\(bundle).SearchSiteIntent": "ss"])
+        XCTAssertEqual(store[QuickKeySync.namespace] as? [String: String], [
+            "\(bundle).SearchSiteIntent": "ss",
+            "\(bundle).OpenBookmarkIntent": "sb",
+        ])
     }
 
     /// Upgrade path: installs from 0.4.0-0.7.0 left per-site dedicated and
@@ -423,9 +430,9 @@ final class BookmarkTests: XCTestCase {
         XCTAssertEqual(sites.count, SiteStore.defaults.count + 1)
     }
 
-    /// Search and bookmark keywords share one namespace and one dropdown, so
-    /// `ss repo` should surface the search and both bookmarks together.
-    func testSearchesAndBookmarksFilterTogether() {
+    /// Text filtering is kind-blind; separating searches from bookmarks is the
+    /// job of each action's own dropdown.
+    func testFilteringIsPurelyTextual() {
         let sites = [
             Site(keyword: "repo", name: "GitHub Repos", template: search),
             Site(keyword: "repo1", name: "SiteSearch", template: bookmark),
@@ -433,6 +440,24 @@ final class BookmarkTests: XCTestCase {
         ]
         XCTAssertEqual(SiteEntityQuery.filter(sites, matching: "repo").count, 3)
         XCTAssertEqual(SiteEntityQuery.filter(sites, matching: "repo1").count, 1)
+    }
+
+    func testKindIsExposedOnTheModel() {
+        XCTAssertTrue(Site(keyword: "b", name: "B", template: bookmark).isBookmark)
+        XCTAssertFalse(Site(keyword: "s", name: "S", template: search).isBookmark)
+    }
+
+    /// Each Spotlight action lists only its own kind: picking a bookmark from
+    /// the search action would demand a query it has no use for, which is the
+    /// whole reason the actions are separate.
+    func testEachActionSeesOnlyItsOwnKind() {
+        let sites = [
+            Site(keyword: "repo", name: "GitHub Repos", template: search),
+            Site(keyword: "repo1", name: "SiteSearch", template: bookmark),
+            Site(keyword: "repo2", name: "Other", template: "https://github.com/zamua/other"),
+        ]
+        XCTAssertEqual(Site.searches(sites).map(\.keyword), ["repo"])
+        XCTAssertEqual(Site.bookmarks(sites).map(\.keyword), ["repo1", "repo2"])
     }
 }
 

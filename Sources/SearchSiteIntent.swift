@@ -13,10 +13,14 @@ struct SearchSiteIntent: AppIntent {
     @Parameter(title: "Site")
     var site: SiteEntity
 
-    // Optional: a bookmark has nothing to search for, so `ss repo1` should run
-    // on Return rather than stopping to demand a query.
+    // Required, and it must stay that way. Three variants were tried on 26.5
+    // so a bookmark could share this action; all failed (see CLAUDE.md):
+    //   String?          -> field renders red, refuses an empty submit
+    //   out of Summary   -> not offered inline at all, killing one-line search
+    //   default: ""      -> Spotlight's inline UI blanks and hangs on Tab
+    // Bookmarks get their own action instead: OpenBookmarkIntent.
     @Parameter(title: "Query")
-    var query: String?
+    var query: String
 
     // Site comes first so text typed right after the quick key filters the
     // dropdown, and `query` MUST stay in the Summary sentence: moving it to the
