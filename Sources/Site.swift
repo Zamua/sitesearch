@@ -19,13 +19,13 @@ struct Site: Codable, Identifiable, Hashable {
     // per-site `slot`) still decodes; the dead field is dropped on rewrite.
     private enum CodingKeys: String, CodingKey { case id, keyword, name, template }
 
-    /// STUB (red): a bookmark is a site with nothing to substitute.
-    var isBookmark: Bool { false }
+    /// A bookmark has nothing to substitute - it just opens.
+    var isBookmark: Bool { !SiteURL.requiresQuery(template) }
 
-    /// STUB (red): the two kinds are surfaced as separate Spotlight actions,
-    /// so each one's dropdown lists only its own kind.
-    static func searches(_ sites: [Site]) -> [Site] { [] }
-    static func bookmarks(_ sites: [Site]) -> [Site] { [] }
+    /// The two kinds are surfaced as separate Spotlight actions, so each one's
+    /// dropdown lists only its own kind.
+    static func searches(_ sites: [Site]) -> [Site] { sites.filter { !$0.isBookmark } }
+    static func bookmarks(_ sites: [Site]) -> [Site] { sites.filter(\.isBookmark) }
 }
 
 /// Reads and writes the site list as JSON under Application Support.

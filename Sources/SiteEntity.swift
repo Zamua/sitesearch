@@ -40,7 +40,7 @@ struct SiteEntity: AppEntity {
 /// lets the keyword alias match, not just the display name.
 struct SiteEntityQuery: EnumerableEntityQuery, EntityStringQuery {
     func allEntities() async throws -> [SiteEntity] {
-        SiteStore.load().map(SiteEntity.init)
+        Site.searches(SiteStore.load()).map(SiteEntity.init)
     }
 
     func entities(for identifiers: [String]) async throws -> [SiteEntity] {
@@ -69,6 +69,57 @@ struct SiteEntityQuery: EnumerableEntityQuery, EntityStringQuery {
     }
 
     func entities(matching string: String) async throws -> [SiteEntity] {
-        Self.filter(SiteStore.load(), matching: string).map(SiteEntity.init)
+        Self.filter(Site.searches(SiteStore.load()), matching: string).map(SiteEntity.init)
+    }
+}
+
+/// A saved URL with nothing to substitute. Deliberately a separate entity type
+/// from SiteEntity: an entity's dropdown comes from its `defaultQuery`, so two
+/// kinds of list means two types. That is what lets "Open Bookmark" offer only
+/// bookmarks and skip the query parameter entirely.
+struct BookmarkEntity: AppEntity {
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Bookmark")
+    static let defaultQuery = BookmarkEntityQuery()
+
+    var id: String
+    var keyword: String
+    var name: String
+    var template: String
+
+    init(site: Site) {
+        self.id = site.id.uuidString
+        self.keyword = site.keyword
+        self.name = site.name
+        self.template = site.template
+    }
+
+    var displayRepresentation: DisplayRepresentation {
+        DisplayRepresentation(title: "\(name)", subtitle: "\(keyword)", image: icon)
+    }
+
+    private var icon: DisplayRepresentation.Image {
+        if let id = UUID(uuidString: id), let data = Favicon.cachedData(for: id) {
+            return DisplayRepresentation.Image(data: data)
+        }
+        return DisplayRepresentation.Image(systemName: "bookmark")
+    }
+}
+
+struct BookmarkEntityQuery: EnumerableEntityQuery, EntityStringQuery {
+    func allEntities() async throws -> [BookmarkEntity] {
+        Site.bookmarks(SiteStore.load()).map(BookmarkEntity.init)
+    }
+
+    func entities(for identifiers: [String]) async throws -> [BookmarkEntity] {
+        let ids = Set(identifiers)
+        return SiteStore.load().map(BookmarkEntity.init).filter { ids.contains($0.id) }
+    }
+
+    func suggestedEntities() async throws -> [BookmarkEntity] {
+        try await allEntities()
+    }
+
+    func entities(matching string: String) async throws -> [BookmarkEntity] {
+        SiteEntityQuery.filter(Site.bookmarks(SiteStore.load()), matching: string).map(BookmarkEntity.init)
     }
 }

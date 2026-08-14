@@ -20,11 +20,16 @@ enum QuickKeySync {
     static let storeKey = "SSActionKeyboardAliasStoreKey"
     static let namespace = "com.apple.shortcuts"
 
-    /// The one quick key this app asks Spotlight for.
-    static let quickKey = "ss"
+    /// The quick keys this app asks Spotlight for. Two, because searches and
+    /// bookmarks have to be separate actions - see OpenBookmarkIntent.
+    static let searchKey = "ss"
+    static let bookmarkKey = "sb"
 
     static func desired(bundleID: String) -> [String: String] {
-        ["\(bundleID).SearchSiteIntent": quickKey]
+        [
+            "\(bundleID).SearchSiteIntent": searchKey,
+            "\(bundleID).OpenBookmarkIntent": bookmarkKey,
+        ]
     }
 
     /// Pure merge: our entries become exactly `desired` (minus abbreviations
