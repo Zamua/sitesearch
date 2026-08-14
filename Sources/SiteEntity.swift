@@ -20,7 +20,17 @@ struct SiteEntity: AppEntity {
     }
 
     var displayRepresentation: DisplayRepresentation {
-        DisplayRepresentation(title: "\(name)", subtitle: "\(keyword)")
+        DisplayRepresentation(title: "\(name)", subtitle: "\(keyword)", image: icon)
+    }
+
+    /// The site's cached favicon if we have one, else a neutral glyph. Read
+    /// from disk synchronously and deliberately: this is called while Spotlight
+    /// draws the list, so it must never touch the network.
+    private var icon: DisplayRepresentation.Image {
+        if let id = UUID(uuidString: id), let data = Favicon.cachedData(for: id) {
+            return DisplayRepresentation.Image(data: data)
+        }
+        return DisplayRepresentation.Image(systemName: "magnifyingglass")
     }
 }
 

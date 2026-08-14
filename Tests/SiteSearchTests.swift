@@ -367,6 +367,142 @@ final class SiteStoreMutationTests: XCTestCase {
     }
 }
 
+final class FaviconTests: XCTestCase {
+    private var tmp: URL!
+
+    override func setUpWithError() throws {
+        tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sitesearch-icons-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tmp)
+    }
+
+    private func site(_ template: String) -> Site {
+        Site(keyword: "k", name: "N", template: template)
+    }
+
+    // MARK: origin
+
+    func testOriginStripsPathAndQuery() {
+        XCTAssertEqual(Favicon.origin(forTemplate: "https://hn.algolia.com/?q={query}")?.absoluteString,
+                       "https://hn.algolia.com")
+        XCTAssertEqual(Favicon.origin(forTemplate: "https://github.com/search?q={query}&type=repositories")?.absoluteString,
+                       "https://github.com")
+    }
+
+    func testOriginRejectsNonHTTPTemplates() {
+        XCTAssertNil(Favicon.origin(forTemplate: "file:///tmp/{query}"))
+        XCTAssertNil(Favicon.origin(forTemplate: "not a url"))
+    }
+
+    // MARK: cache
+
+    func testCachedDataIsNilUntilSomethingIsWritten() throws {
+        let id = UUID()
+        XCTAssertNil(Favicon.cachedData(for: id, in: tmp))
+        try Data("png".utf8).write(to: Favicon.cacheURL(for: id, in: tmp))
+        XCTAssertEqual(Favicon.cachedData(for: id, in: tmp), Data("png".utf8))
+    }
+
+    func testCacheURLIsPerSite() {
+        let a = UUID(), b = UUID()
+        XCTAssertNotEqual(Favicon.cacheURL(for: a, in: tmp), Favicon.cacheURL(for: b, in: tmp))
+    }
+
+    // MARK: HTML parsing
+
+    func testIconHrefsResolveRelativeAndAbsoluteLinks() throws {
+        let origin = try XCTUnwrap(URL(string: "https://example.com"))
+        let html = """
+        <html><head>
+        <link rel="stylesheet" href="/style.css">
+        <link rel="icon" href="/fav.png">
+        <link rel="apple-touch-icon" href="https://cdn.example.com/touch.png">
+        </head></html>
+        """
+        let hrefs = Favicon.iconHrefs(inHTML: html, origin: origin).map(\.absoluteString)
+        XCTAssertTrue(hrefs.contains("https://example.com/fav.png"), "got \(hrefs)")
+        XCTAssertTrue(hrefs.contains("https://cdn.example.com/touch.png"), "got \(hrefs)")
+        XCTAssertFalse(hrefs.contains { $0.hasSuffix("style.css") }, "picked up a non-icon link")
+    }
+
+    func testIconHrefsHandleShortcutIconAndSingleQuotes() throws {
+        let origin = try XCTUnwrap(URL(string: "https://example.com"))
+        let html = "<link rel='shortcut icon' href='/legacy.ico'>"
+        let hrefs = Favicon.iconHrefs(inHTML: html, origin: origin).map(\.absoluteString)
+        XCTAssertEqual(hrefs, ["https://example.com/legacy.ico"])
+    }
+
+    func testIconHrefsAreEmptyWhenThePageDeclaresNone() throws {
+        let origin = try XCTUnwrap(URL(string: "https://example.com"))
+        XCTAssertTrue(Favicon.iconHrefs(inHTML: "<html><body>hi</body></html>", origin: origin).isEmpty)
+    }
+
+    // MARK: fetching
+
+    func testEnsureCachedWritesTheFetchedIcon() {
+        let site = site("https://example.com/search?q={query}")
+        let png = Data("PNGDATA".utf8)
+        let ok = Favicon.ensureCached(for: site, in: tmp) { url in
+            url.absoluteString == "https://example.com/favicon.ico" ? png : nil
+        }
+        XCTAssertTrue(ok)
+        XCTAssertEqual(Favicon.cachedData(for: site.id, in: tmp), png)
+    }
+
+    func testEnsureCachedSkipsTheNetworkWhenAlreadyCached() throws {
+        let site = site("https://example.com/search?q={query}")
+        try Data("existing".utf8).write(to: Favicon.cacheURL(for: site.id, in: tmp))
+        var fetched: [URL] = []
+        let ok = Favicon.ensureCached(for: site, in: tmp) { url in
+            fetched.append(url)
+            return Data("new".utf8)
+        }
+        XCTAssertTrue(ok)
+        XCTAssertTrue(fetched.isEmpty, "re-fetched an icon it already had")
+        XCTAssertEqual(Favicon.cachedData(for: site.id, in: tmp), Data("existing".utf8))
+    }
+
+    /// Most sites do not serve /favicon.ico any more; fall back to what the
+    /// page declares.
+    func testEnsureCachedFallsBackToTheDeclaredIcon() {
+        let site = site("https://example.com/search?q={query}")
+        let png = Data("REALICON".utf8)
+        let ok = Favicon.ensureCached(for: site, in: tmp) { url in
+            switch url.absoluteString {
+            case "https://example.com/favicon.ico": return nil
+            case "https://example.com": return Data(#"<link rel="icon" href="/i.png">"#.utf8)
+            case "https://example.com/i.png": return png
+            default: return nil
+            }
+        }
+        XCTAssertTrue(ok)
+        XCTAssertEqual(Favicon.cachedData(for: site.id, in: tmp), png)
+    }
+
+    func testEnsureCachedWritesNothingWhenEverythingFails() {
+        let site = site("https://example.com/search?q={query}")
+        let ok = Favicon.ensureCached(for: site, in: tmp) { _ in nil }
+        XCTAssertFalse(ok)
+        XCTAssertNil(Favicon.cachedData(for: site.id, in: tmp))
+    }
+
+    func testEnsureCachedIgnoresEmptyResponses() {
+        let site = site("https://example.com/search?q={query}")
+        let ok = Favicon.ensureCached(for: site, in: tmp) { _ in Data() }
+        XCTAssertFalse(ok, "an empty body is not an icon")
+        XCTAssertNil(Favicon.cachedData(for: site.id, in: tmp))
+    }
+
+    func testEnsureCachedIsANoOpForAnUnusableTemplate() {
+        let site = site("file:///tmp/{query}")
+        XCTAssertFalse(Favicon.ensureCached(for: site, in: tmp) { _ in Data("x".utf8) })
+    }
+}
+
 /// The config window holds the whole list in @State, so it is the one writer
 /// that could still erase an agent's concurrent addition. These pin the
 /// three-way merge that stops it.
