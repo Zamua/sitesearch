@@ -199,6 +199,174 @@ final class DefaultSitesTests: XCTestCase {
     }
 }
 
+final class SiteOpsTests: XCTestCase {
+    private var base: [Site] { SiteStore.defaults }
+
+    private func assertThrows(_ expected: SiteOpError, file: StaticString = #filePath, line: UInt = #line, _ body: () throws -> Void) {
+        do {
+            try body()
+            XCTFail("expected \(expected), no error thrown", file: file, line: line)
+        } catch let error as SiteOpError {
+            XCTAssertEqual(error, expected, file: file, line: line)
+        } catch {
+            XCTFail("expected \(expected), got \(error)", file: file, line: line)
+        }
+    }
+
+    func testFindMatchesByKeywordOrID() {
+        XCTAssertEqual(SiteOps.find(base, "code")?.name, "GitHub")
+        XCTAssertEqual(SiteOps.find(base, "CODE")?.name, "GitHub", "keyword lookup should be case-insensitive")
+        XCTAssertEqual(SiteOps.find(base, base[0].id.uuidString)?.name, "Google")
+        XCTAssertNil(SiteOps.find(base, "nope"))
+    }
+
+    func testAddAppendsAndMintsAFreshID() throws {
+        let (sites, added) = try SiteOps.add(to: base, name: "Hacker News", keyword: "hn", template: "https://hn.algolia.com/?q={query}")
+        XCTAssertEqual(sites.count, base.count + 1)
+        XCTAssertEqual(added.name, "Hacker News")
+        XCTAssertEqual(added.keyword, "hn")
+        XCTAssertEqual(sites.last?.id, added.id)
+        XCTAssertFalse(base.map(\.id).contains(added.id), "reused an existing id")
+    }
+
+    func testAddRejectsTemplateWithoutPlaceholder() {
+        assertThrows(.missingPlaceholder("https://x.example/?q=")) {
+            _ = try SiteOps.add(to: base, name: "X", keyword: "x", template: "https://x.example/?q=")
+        }
+    }
+
+    func testAddRejectsNonHTTPScheme() {
+        assertThrows(.invalidTemplate("file:///tmp/{query}")) {
+            _ = try SiteOps.add(to: base, name: "X", keyword: "x", template: "file:///tmp/{query}")
+        }
+    }
+
+    func testAddRejectsEmptyNameAndKeyword() {
+        assertThrows(.emptyName) {
+            _ = try SiteOps.add(to: base, name: "  ", keyword: "x", template: "https://x.example/?q={query}")
+        }
+        assertThrows(.emptyKeyword) {
+            _ = try SiteOps.add(to: base, name: "X", keyword: " ", template: "https://x.example/?q={query}")
+        }
+    }
+
+    /// An agent that asked for `hn` should be told the keyword is taken, not
+    /// silently handed `hn2` (which import-merge does, on purpose).
+    func testAddRejectsDuplicateKeywordCaseInsensitively() {
+        assertThrows(.keywordTaken("GOOGLE")) {
+            _ = try SiteOps.add(to: base, name: "My Google", keyword: "GOOGLE", template: "https://g.example/?q={query}")
+        }
+    }
+
+    func testUpdateChangesOnlyTheGivenFields() throws {
+        let before = try XCTUnwrap(SiteOps.find(base, "code"))
+        let (sites, updated) = try SiteOps.update(in: base, selector: "code", name: nil, keyword: "gh", template: nil)
+        XCTAssertEqual(updated.keyword, "gh")
+        XCTAssertEqual(updated.name, before.name, "name should be untouched")
+        XCTAssertEqual(updated.template, before.template, "template should be untouched")
+        XCTAssertEqual(updated.id, before.id, "id must be stable across edits")
+        XCTAssertEqual(sites.count, base.count)
+    }
+
+    func testUpdateAllowsKeepingItsOwnKeyword() throws {
+        let (_, updated) = try SiteOps.update(in: base, selector: "code", name: "GitHub Code", keyword: "code", template: nil)
+        XCTAssertEqual(updated.name, "GitHub Code")
+        XCTAssertEqual(updated.keyword, "code")
+    }
+
+    func testUpdateRejectsAKeywordAnotherSiteHolds() {
+        assertThrows(.keywordTaken("google")) {
+            _ = try SiteOps.update(in: base, selector: "code", name: nil, keyword: "google", template: nil)
+        }
+    }
+
+    func testUpdateValidatesANewTemplate() {
+        assertThrows(.missingPlaceholder("https://x.example/")) {
+            _ = try SiteOps.update(in: base, selector: "code", name: nil, keyword: nil, template: "https://x.example/")
+        }
+    }
+
+    func testUpdateUnknownSelectorThrows() {
+        assertThrows(.notFound("nope")) {
+            _ = try SiteOps.update(in: base, selector: "nope", name: "X", keyword: nil, template: nil)
+        }
+    }
+
+    func testRemoveByKeyword() throws {
+        let (sites, removed) = try SiteOps.remove(from: base, selector: "code")
+        XCTAssertEqual(removed.name, "GitHub")
+        XCTAssertEqual(sites.count, base.count - 1)
+        XCTAssertNil(SiteOps.find(sites, "code"))
+    }
+
+    func testRemoveUnknownSelectorThrows() {
+        assertThrows(.notFound("nope")) {
+            _ = try SiteOps.remove(from: base, selector: "nope")
+        }
+    }
+}
+
+/// Disk-level behaviour, against a temp file - never the real config.
+final class SiteStoreMutationTests: XCTestCase {
+    private var tmp: URL!
+    private var file: URL { tmp.appendingPathComponent("sites.json") }
+
+    override func setUpWithError() throws {
+        tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sitesearch-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tmp)
+    }
+
+    func testMutateAppliesAndPersists() throws {
+        SiteStore.save(SiteStore.defaults, to: file)
+        let added = try SiteStore.mutate(at: file) {
+            try SiteOps.add(to: $0, name: "Hacker News", keyword: "hn", template: "https://hn.algolia.com/?q={query}")
+        }
+        XCTAssertEqual(added.keyword, "hn")
+        let reloaded = SiteStore.load(from: file)
+        XCTAssertEqual(reloaded.count, SiteStore.defaults.count + 1)
+        XCTAssertNotNil(SiteOps.find(reloaded, "hn"))
+    }
+
+    /// The lost-update case that made agent-added sites vanish: a caller
+    /// holding a stale snapshot must not be able to erase a concurrent write,
+    /// because mutate re-reads under the lock rather than trusting the caller.
+    func testMutateRereadsSoAConcurrentAdditionSurvives() throws {
+        SiteStore.save(SiteStore.defaults, to: file)
+        let stale = SiteStore.load(from: file)
+
+        _ = try SiteStore.mutate(at: file) {
+            try SiteOps.add(to: $0, name: "Hacker News", keyword: "hn", template: "https://hn.algolia.com/?q={query}")
+        }
+        _ = try SiteStore.mutate(at: file) {
+            try SiteOps.update(in: $0, selector: "code", name: "GH", keyword: nil, template: nil)
+        }
+
+        let final = SiteStore.load(from: file)
+        XCTAssertEqual(stale.count, SiteStore.defaults.count, "sanity: the snapshot predates the addition")
+        XCTAssertNotNil(SiteOps.find(final, "hn"), "concurrently added site was clobbered")
+        XCTAssertEqual(SiteOps.find(final, "code")?.name, "GH")
+    }
+
+    func testFailedMutationLeavesTheFileUntouched() throws {
+        SiteStore.save(SiteStore.defaults, to: file)
+        XCTAssertThrowsError(try SiteStore.mutate(at: file) {
+            try SiteOps.add(to: $0, name: "Bad", keyword: "bad", template: "https://x.example/")
+        })
+        XCTAssertEqual(SiteStore.load(from: file).count, SiteStore.defaults.count)
+    }
+
+    func testLockIsReentrantEnoughForNestedReads() throws {
+        SiteStore.save(SiteStore.defaults, to: file)
+        let count = SiteStore.withLock(at: file) { SiteStore.load(from: file).count }
+        XCTAssertEqual(count, SiteStore.defaults.count)
+    }
+}
+
 /// The whole point of dropping slots: a site added behind the app's back (an
 /// agent writing sites.json, an import) is searchable with no slot
 /// allocation, no quick-key write, and no relaunch.

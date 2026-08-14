@@ -31,6 +31,19 @@ enum SiteStore {
         return base.appendingPathComponent("SiteSearch/sites.json")
     }
 
+    /// STUB (red): runs `body` while holding an exclusive lock on the config,
+    /// so the app and the MCP server cannot interleave read-modify-write.
+    static func withLock<T>(at url: URL = fileURL, _ body: () throws -> T) rethrows -> T {
+        try body()
+    }
+
+    /// STUB (red): the only supported way to change the config. Re-reads disk
+    /// under the lock, applies an intent-shaped operation, and persists - so a
+    /// caller holding a stale list cannot erase someone else's write.
+    static func mutate<T>(at url: URL = fileURL, _ body: ([Site]) throws -> ([Site], T)) throws -> T {
+        try body(load(from: url)).1
+    }
+
     // Fixed IDs: entity identifiers must be stable across processes (Spotlight
     // caches them for recents and pre-filled parameters), so the out-of-box
     // defaults cannot mint fresh UUIDs per launch. Ids are retained across
@@ -43,21 +56,21 @@ enum SiteStore {
         Site(id: UUID(uuidString: "9D2C63A0-5B21-4A2E-9C5A-000000000017")!, keyword: "repo", name: "GitHub Repos", template: "https://github.com/search?q={query}&type=repositories"),
     ]
 
-    static func load() -> [Site] {
+    static func load(from url: URL = fileURL) -> [Site] {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: fileURL.path) else {
-            save(defaults)
+        guard fm.fileExists(atPath: url.path) else {
+            save(defaults, to: url)
             return defaults
         }
-        guard let data = try? Data(contentsOf: fileURL),
+        guard let data = try? Data(contentsOf: url),
               let sites = try? JSONDecoder().decode([Site].self, from: data) else {
             // An existing but unreadable file must never be silently replaced:
             // the UI would save defaults over the user's config. Park it for
             // recovery, then start over.
-            let backup = fileURL.appendingPathExtension("corrupt")
+            let backup = url.appendingPathExtension("corrupt")
             try? fm.removeItem(at: backup)
-            try? fm.moveItem(at: fileURL, to: backup)
-            save(defaults)
+            try? fm.moveItem(at: url, to: backup)
+            save(defaults, to: url)
             return defaults
         }
         return sites
@@ -66,13 +79,13 @@ enum SiteStore {
     /// Returns the array actually persisted so callers can keep their
     /// in-memory copy in step with disk.
     @discardableResult
-    static func save(_ sites: [Site]) -> [Site] {
-        let dir = fileURL.deletingLastPathComponent()
+    static func save(_ sites: [Site], to url: URL = fileURL) -> [Site] {
+        let dir = url.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(sites) {
-            try? data.write(to: fileURL, options: .atomic)
+            try? data.write(to: url, options: .atomic)
         }
         return sites
     }
