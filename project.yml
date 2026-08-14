@@ -64,6 +64,12 @@ targets:
         DEVELOPMENT_TEAM: 7FDZK7U8A6
         ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES
+      configs:
+        # Xcode injects com.apple.security.get-task-allow (the debugger
+        # entitlement) unless told not to, and notarization rejects any binary
+        # carrying it. Release only - Debug needs it to attach a debugger.
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
   # Stdio MCP server for agents: add/update/remove/search sites without the
   # GUI. Ships inside the .app at Contents/MacOS/sitesearch-mcp.
   sitesearch-mcp:
@@ -86,6 +92,11 @@ targets:
         CODE_SIGN_IDENTITY: "Apple Development"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 7FDZK7U8A6
+      configs:
+        # Same as the app target: the injected debugger entitlement is a
+        # notarization hard-fail, and every nested binary is checked.
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
 
   SiteSearchTests:
     type: bundle.unit-test

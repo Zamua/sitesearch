@@ -514,6 +514,18 @@ final class ReleaseConfigTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(enabled, 2,
                                     "both the app and the sitesearch-mcp target need the hardened runtime")
     }
+
+    /// Xcode injects com.apple.security.get-task-allow unless told not to, and
+    /// the notary service rejects every binary carrying it ("The executable
+    /// requests the com.apple.security.get-task-allow entitlement"). Both
+    /// executables in the bundle are checked, so both targets must opt out for
+    /// Release. Debug keeps it - that is what lets a debugger attach.
+    func testReleaseDoesNotInjectTheDebuggerEntitlement() throws {
+        let project = try read("project.yml")
+        let optedOut = project.components(separatedBy: "CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO").count - 1
+        XCTAssertGreaterThanOrEqual(optedOut, 2,
+                                    "the app and sitesearch-mcp targets must both opt out of the injected debugger entitlement for Release")
+    }
 }
 
 final class FaviconTests: XCTestCase {

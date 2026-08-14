@@ -24,11 +24,28 @@ jobs:
     # macos-26 so the build OS matches the deployment target.
     runs-on: macos-26
     steps:
+      # Releases are cut locally on a machine that already holds the Developer
+      # ID key, so these secrets may legitimately be unset. Skip cleanly rather
+      # than failing every tag with a red X on a repo that never opted in.
+      - name: Check signing secrets
+        id: gate
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+        run: |
+          if [ -n "$P12" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No DEVELOPER_ID_P12 secret; skipping. This tag was released locally."
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.configured == 'true'
 
       # Runner images ship several Xcode 26.x side by side and drop old ones,
       # so pick the newest present rather than pinning a path that disappears.
       - name: Select newest Xcode 26
+        if: steps.gate.outputs.configured == 'true'
         run: |
           set -euo pipefail
           XCODE=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
@@ -37,13 +54,16 @@ jobs:
           xcodebuild -version
 
       - name: Install XcodeGen
+        if: steps.gate.outputs.configured == 'true'
         run: brew install xcodegen
 
       - name: Derive version from tag
         id: version
+        if: steps.gate.outputs.configured == 'true'
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Import Developer ID certificate
+        if: steps.gate.outputs.configured == 'true'
         env:
           P12: ${{ secrets.DEVELOPER_ID_P12 }}
           P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
@@ -65,6 +85,7 @@ jobs:
           security find-identity -v -p codesigning
 
       - name: Build signed universal app
+        if: steps.gate.outputs.configured == 'true'
         env:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -84,6 +105,7 @@ jobs:
             build
 
       - name: Verify signature and architectures
+        if: steps.gate.outputs.configured == 'true'
         run: |
           set -euo pipefail
           APP=.build/Release/SiteSearch.app
@@ -97,6 +119,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP"
 
       - name: Notarize and staple
+        if: steps.gate.outputs.configured == 'true'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
@@ -121,6 +144,7 @@ jobs:
 
       - name: Checksum
         id: checksum
+        if: steps.gate.outputs.configured == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -134,6 +158,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish release
+        if: steps.gate.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
