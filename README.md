@@ -30,6 +30,10 @@ Sites live in `~/Library/Application Support/SiteSearch/sites.json` as plain
 JSON (version-control it if you like). The URL template uses the literal
 placeholder `{query}`, e.g. `https://github.com/search?q={query}`.
 
+Leave `{query}` out and the entry becomes a **bookmark**: `ss repo1` opens it
+directly, no query step. Searches and bookmarks share one list and one set of
+keywords, so `ss repo` shows your `repo` search next to `repo1` and `repo2`.
+
 Each site's favicon is fetched from that site's own origin when you add it -
 never through a third-party favicon service - and cached alongside the config
 in `icons/`. Sites without a reachable icon fall back to a plain glyph.

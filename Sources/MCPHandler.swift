@@ -103,13 +103,23 @@ struct MCPHandler {
         case "list_sites":
             return try encode(SiteStore.load(from: storeURL).map(Self.describe))
 
-        case "add_site":
+        case "add_site", "add_bookmark":
+            // Storage accepts either kind; the two tools exist so an agent
+            // states which it means and gets told when it mixes them up.
+            let template = try string(args, "template")
+            let wantsSearch = tool == "add_site"
+            if wantsSearch, !SiteURL.requiresQuery(template) {
+                throw SiteOpError.missingPlaceholder(template)
+            }
+            if !wantsSearch, SiteURL.requiresQuery(template) {
+                throw MCPArgumentError.unexpectedPlaceholder(template)
+            }
             let added = try SiteStore.mutate(at: storeURL) {
                 try SiteOps.add(
                     to: $0,
                     name: try string(args, "name"),
                     keyword: try string(args, "keyword"),
-                    template: try string(args, "template")
+                    template: template
                 )
             }
             // Best-effort: a site whose icon will not load is still a good site.
@@ -154,7 +164,8 @@ struct MCPHandler {
             guard let site = SiteOps.find(sites, selector) else {
                 throw SiteOpError.notFound(selector)
             }
-            let url = try SiteURL.build(template: site.template, query: query)
+            // A bookmark has nothing to substitute, so the query is ignored.
+            let url = try SiteURL.resolve(template: site.template, query: query)
             guard opener(url) else {
                 throw SearchSiteError.openFailed(url.absoluteString)
             }
@@ -183,7 +194,7 @@ struct MCPHandler {
 
     // MARK: - Schemas
 
-    static let toolNames: Set<String> = ["list_sites", "add_site", "update_site", "remove_site", "search_site"]
+    static let toolNames: Set<String> = ["list_sites", "add_site", "add_bookmark", "update_site", "remove_site", "search_site"]
 
     private static func schema(_ properties: [String: Any], required: [String]) -> [String: Any] {
         ["type": "object", "properties": properties, "required": required]
@@ -208,6 +219,15 @@ struct MCPHandler {
                 "name": ["type": "string", "description": "Display name shown in Spotlight, e.g. 'Hacker News'."],
                 "keyword": ["type": "string", "description": "Short alias typed to pick the site, e.g. 'hn'. Must be unique."],
                 "template": ["type": "string", "description": "Search URL with the literal placeholder {query}, e.g. https://hn.algolia.com/?q={query}"],
+            ], required: ["name", "keyword", "template"]),
+        ],
+        [
+            "name": "add_bookmark",
+            "description": "Save a URL to open directly - no query. Usable in Spotlight immediately: Cmd-Space, 'ss', the keyword, Return.",
+            "inputSchema": schema([
+                "name": ["type": "string", "description": "Display name shown in Spotlight, e.g. 'SiteSearch Repo'."],
+                "keyword": ["type": "string", "description": "Short alias typed to open it, e.g. 'repo1'. Must be unique across sites and bookmarks."],
+                "template": ["type": "string", "description": "The URL to open, with NO {query} placeholder, e.g. https://github.com/zamua/sitesearch"],
             ], required: ["name", "keyword", "template"]),
         ],
         [
@@ -255,11 +275,14 @@ struct MCPHandler {
 
 enum MCPArgumentError: Error, LocalizedError {
     case missing(String)
+    case unexpectedPlaceholder(String)
 
     var errorDescription: String? {
         switch self {
         case .missing(let key):
             return "Missing required argument '\(key)'."
+        case .unexpectedPlaceholder(let template):
+            return "A bookmark opens a fixed URL, so its template must not contain {query}: \(template). Use add_site for a search."
         }
     }
 }

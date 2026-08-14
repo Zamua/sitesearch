@@ -39,9 +39,14 @@ Config changes and agent access:
   search uses, so a site that stores cannot fail only at search time. Adding a
   duplicate keyword is an error here (an agent asked for `hn` and should be
   told), unlike import-merge which suffixes on purpose.
-- `Sources/SiteURL.swift` - `SiteURL.build` + `SearchSiteError`, Foundation
-  only, so the CLI can validate without importing AppIntents.
-  `SearchSiteIntent.buildURL` forwards to it.
+- `Sources/SiteURL.swift` - `SiteURL.resolve/build` + `SearchSiteError`,
+  Foundation only, so the CLI can validate without importing AppIntents.
+  A site's KIND is inferred from its template, not stored: with `{query}` it
+  is a search, without it is a bookmark that opens as-is (`ss repo1`). One
+  model, one dropdown, one keyword namespace - so `ss repo` surfaces the
+  `repo` search alongside `repo1`/`repo2` bookmarks. `resolve` handles both;
+  `build` stays strict for the search path. A search run with no query
+  resolves to the bare search page rather than failing.
 - `Sources/Favicon.swift` - fetches each site's icon FROM ITS OWN ORIGIN (a
   third-party favicon proxy would report every configured site to someone
   else), caching bytes at `icons/<site-uuid>` so `sites.json` stays clean
