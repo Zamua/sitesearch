@@ -54,7 +54,6 @@ enum SearchSiteError: Error, CustomLocalizedStringResourceConvertible {
     case invalidURL(String)
     case missingPlaceholder(String)
     case openFailed(String)
-    case slotEmpty(Int)
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
@@ -64,8 +63,6 @@ enum SearchSiteError: Error, CustomLocalizedStringResourceConvertible {
             return "The site's URL template is missing the {query} placeholder: \(t)"
         case .openFailed(let s):
             return "The browser could not open: \(s)"
-        case .slotEmpty(let n):
-            return "No custom site is assigned to slot \(n). Open SiteSearch to configure sites."
         }
     }
 }
@@ -74,14 +71,10 @@ struct SiteSearchShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: SearchSiteIntent(),
-            phrases: [
-                "Search with \(.applicationName)",
-                // Parameterized: expands per configured site at runtime
-                // (updateAppShortcutParameters refreshes after config edits).
-                // Whether Tahoe Spotlight surfaces the per-site expansions as
-                // typeable actions is the experiment this phrase exists for.
-                "Search \(\.$site) with \(.applicationName)",
-            ],
+            // Non-parameterized only: per-site phrase expansions were verified
+            // NOT to surface as typeable Spotlight actions on macOS 26.5, and
+            // the single `ss` action replaces what they were reaching for.
+            phrases: ["Search with \(.applicationName)"],
             shortTitle: "Search Site",
             systemImageName: "magnifyingglass"
         )

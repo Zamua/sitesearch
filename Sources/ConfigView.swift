@@ -47,14 +47,6 @@ struct ConfigView: View {
                 .disabled(selection == nil)
 
                 Button {
-                    let changed = QuickKeySync.sync()
-                    syncMessage = changed ? "Spotlight quick keys updated" : "Quick keys already in sync"
-                } label: {
-                    Label("Sync Quick Keys", systemImage: "command.square")
-                }
-                .help("Mirrors each site's keyword into Spotlight as its quick key (also happens automatically)")
-
-                Button {
                     showingExport = true
                 } label: {
                     Label("Share…", systemImage: "square.and.arrow.up")
@@ -63,7 +55,7 @@ struct ConfigView: View {
 
                 Spacer()
 
-                Text(syncMessage ?? "Type a quick key in Spotlight (Cmd-Space), e.g. repo query")
+                Text(syncMessage ?? "In Spotlight (Cmd-Space): ss, then a keyword, Tab, your query")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

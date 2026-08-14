@@ -2,7 +2,7 @@
 
 Custom website search for macOS Tahoe Spotlight. Configure keyword-to-URL
 mappings in a small window, then search any of them straight from Spotlight:
-Cmd-Space, type the action's quick key, pick a site, type your query, Return.
+Cmd-Space, `ss`, pick a site (or type its keyword), Tab, your query, Return.
 Your default browser opens the site's search results. A native replacement
 for the web-search half of Alfred/Raycast.
 
@@ -32,7 +32,15 @@ make install   # generate project, build Release, copy to /Applications, launch
 
 ## First-time Spotlight setup
 
-1. Launch the app once (registers it with Launch Services).
-2. Cmd-Space, press Cmd-3 (Actions), find "Search Site".
-3. Click "Add quick keys" next to it and pick something short, e.g. `ws`.
-4. Use it: Cmd-Space, `ws git`, Tab, your query, Return.
+1. Launch the app once. That registers it with Launch Services and asks
+   Spotlight for the quick key `ss`.
+2. Use it: Cmd-Space, `ss git`, Tab, your query, Return.
+
+If `ss` does nothing, assign it by hand once: Cmd-Space, Cmd-3 (Actions),
+find "Search Site", "Add quick keys", type `ss`. (Another app may already
+own the abbreviation, in which case pick a different one - the app never
+takes an abbreviation something else has claimed.)
+
+Adding sites needs no setup at all. There is one action and one quick key;
+a site you add - in the window, by importing a `.sitesearch` file, or by
+editing `sites.json` directly - is searchable immediately, no relaunch.

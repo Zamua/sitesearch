@@ -42,16 +42,23 @@ struct SiteEntityQuery: EnumerableEntityQuery, EntityStringQuery {
         try await allEntities()
     }
 
-    /// STUB (red): pure predicate behind entities(matching:), extracted so the
-    /// filter behaviour is unit-testable.
+    /// The filter behind entities(matching:), extracted as a pure function so
+    /// it is unit-testable. A site matches on a name substring or a keyword
+    /// prefix - the keyword is how you pick a site once `ss` is running, so
+    /// prefix matching is what makes `ss hn` land on Hacker News.
+    static func filter(_ sites: [Site], matching needle: String) -> [Site] {
+        let needle = needle.lowercased()
+        guard !needle.isEmpty else { return sites }
+        return sites.filter {
+            $0.name.lowercased().contains(needle) || $0.keyword.lowercased().hasPrefix(needle)
+        }
+    }
+
     static func matches(_ sites: [Site], _ needle: String) -> Bool {
-        false
+        !filter(sites, matching: needle).isEmpty
     }
 
     func entities(matching string: String) async throws -> [SiteEntity] {
-        let needle = string.lowercased()
-        return SiteStore.load().map(SiteEntity.init).filter {
-            $0.name.lowercased().contains(needle) || $0.keyword.lowercased().hasPrefix(needle)
-        }
+        Self.filter(SiteStore.load(), matching: string).map(SiteEntity.init)
     }
 }

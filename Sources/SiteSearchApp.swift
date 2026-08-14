@@ -3,11 +3,10 @@ import SwiftUI
 @main
 struct SiteSearchApp: App {
     init() {
-        // Idempotent, merge-only: assigns default Spotlight quick keys on
-        // every launch without touching user customizations.
+        // Idempotent, merge-only: registers the single `ss` quick key on every
+        // launch without touching other apps' assignments. Independent of the
+        // site list, so adding a site needs no sync.
         QuickKeySync.sync()
-        // Expand parameterized App Shortcut phrases from the current config.
-        SiteSearchShortcuts.updateAppShortcutParameters()
     }
 
     var body: some Scene {

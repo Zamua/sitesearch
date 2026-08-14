@@ -7,11 +7,12 @@ import Foundation
 ///
 /// Spotlight observes the domain live (no restart needed; verified on
 /// macOS 26.5). The key is UNDOCUMENTED: sync() degrades to a no-op if the
-/// shape ever changes.
+/// shape ever changes, and the user can always assign `ss` by hand instead.
 ///
-/// Model: a site's KEYWORD is its quick key - one source of truth, edited in
-/// the config window. Our entries in the store are derived state mirrored
-/// from the config on every launch and save (add/update/prune). Entries
+/// Model: the app registers exactly ONE quick key, `ss`, for its single
+/// Search Site action - it does not vary with the config. Site keywords are
+/// filter text inside that action's site dropdown, not registered
+/// abbreviations, so adding a site needs no write here at all. Entries
 /// belonging to other apps are never touched, and an abbreviation another
 /// app's action already claims is never stolen.
 enum QuickKeySync {
@@ -19,37 +20,16 @@ enum QuickKeySync {
     static let storeKey = "SSActionKeyboardAliasStoreKey"
     static let namespace = "com.apple.shortcuts"
 
-    /// Default site id -> its dedicated intent type name.
-    static let dedicatedIntentsByID: [String: String] = [
-        "9D2C63A0-5B21-4A2E-9C5A-000000000001": "SearchGoogleIntent",
-        "9D2C63A0-5B21-4A2E-9C5A-000000000002": "SearchGitHubIntent",
-        "9D2C63A0-5B21-4A2E-9C5A-000000000017": "SearchGitHubReposIntent",
-    ]
+    /// The one quick key this app asks Spotlight for.
+    static let quickKey = "ss"
 
-    /// STUB (red): the single-action map this app wants.
     static func desired(bundleID: String) -> [String: String] {
-        [:]
-    }
-
-    /// The full intent->abbrev map this config wants: the generic action,
-    /// the dedicated defaults (keyword tracks config), and one entry per
-    /// slotted custom site.
-    static func desired(bundleID: String, sites: [Site]) -> [String: String] {
-        var map = ["\(bundleID).SearchSiteIntent": "ws"]
-        for site in sites {
-            let keyword = site.keyword.trimmingCharacters(in: .whitespaces)
-            guard !keyword.isEmpty else { continue }
-            if let intent = dedicatedIntentsByID[site.id.uuidString] {
-                map["\(bundleID).\(intent)"] = keyword
-            } else if let slot = site.slot, (1...SiteStore.slotCount).contains(slot) {
-                map["\(bundleID).CustomSearch\(slot)Intent"] = keyword
-            }
-        }
-        return map
+        ["\(bundleID).SearchSiteIntent": quickKey]
     }
 
     /// Pure merge: our entries become exactly `desired` (minus abbreviations
-    /// other apps' actions already hold); everything else is preserved.
+    /// other apps' actions already hold); everything else is preserved. Any
+    /// per-site entry left by 0.4.0-0.7.0 is pruned by the same rule.
     static func merged(existing: [String: Any]?, desired: [String: String], bundleID: String) -> (store: [String: Any], changed: Bool) {
         var store = existing ?? [:]
         let ns = store[namespace] as? [String: String] ?? [:]
@@ -66,13 +46,12 @@ enum QuickKeySync {
         return (store, changed)
     }
 
-    /// Reads the config and mirrors it into Spotlight's store. Safe to call
-    /// often; writes only when something actually changed.
+    /// Registers the quick key. Safe to call often; writes only when something
+    /// actually changed.
     @discardableResult
     static func sync(bundleID: String = Bundle.main.bundleIdentifier ?? "com.zamua.SiteSearch") -> Bool {
         let existing = CFPreferencesCopyAppValue(storeKey as CFString, suite as CFString) as? [String: Any]
-        let want = desired(bundleID: bundleID, sites: SiteStore.load())
-        let (store, changed) = merged(existing: existing, desired: want, bundleID: bundleID)
+        let (store, changed) = merged(existing: existing, desired: desired(bundleID: bundleID), bundleID: bundleID)
         guard changed else { return false }
         CFPreferencesSetAppValue(storeKey as CFString, store as CFDictionary, suite as CFString)
         CFPreferencesAppSynchronize(suite as CFString)
