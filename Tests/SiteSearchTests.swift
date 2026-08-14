@@ -367,6 +367,68 @@ final class SiteStoreMutationTests: XCTestCase {
     }
 }
 
+/// The config window holds the whole list in @State, so it is the one writer
+/// that could still erase an agent's concurrent addition. These pin the
+/// three-way merge that stops it.
+final class SiteReconcileTests: XCTestCase {
+    private func site(_ name: String, _ keyword: String) -> Site {
+        Site(keyword: keyword, name: name, template: "https://\(keyword).example/?q={query}")
+    }
+
+    func testExternalAdditionSurvivesAWindowEdit() {
+        let a = site("Alpha", "a"), b = site("Beta", "b"), c = site("Gamma", "c")
+        var renamed = b
+        renamed.name = "Beta Renamed"
+
+        let result = SiteReconcile.apply(edited: [a, renamed], baseline: [a, b], disk: [a, b, c])
+
+        XCTAssertEqual(result.count, 3, "the externally added site was dropped")
+        XCTAssertNotNil(result.first { $0.id == c.id }, "agent's site was clobbered")
+        XCTAssertEqual(result.first { $0.id == b.id }?.name, "Beta Renamed", "window's rename was lost")
+    }
+
+    func testWindowDeletionIsApplied() {
+        let a = site("Alpha", "a"), b = site("Beta", "b"), c = site("Gamma", "c")
+        let result = SiteReconcile.apply(edited: [a], baseline: [a, b], disk: [a, b, c])
+        XCTAssertNil(result.first { $0.id == b.id }, "window's deletion was ignored")
+        XCTAssertNotNil(result.first { $0.id == c.id }, "unrelated site was deleted")
+    }
+
+    func testWindowAdditionIsAppended() {
+        let a = site("Alpha", "a"), c = site("Gamma", "c"), new = site("New", "n")
+        let result = SiteReconcile.apply(edited: [a, new], baseline: [a], disk: [a, c])
+        XCTAssertEqual(result.count, 3)
+        XCTAssertNotNil(result.first { $0.id == new.id })
+        XCTAssertNotNil(result.first { $0.id == c.id })
+    }
+
+    func testFieldTheWindowDidNotTouchKeepsTheExternalValue() {
+        let a = site("Alpha", "a")
+        var external = a
+        external.template = "https://changed.example/?q={query}"
+        let result = SiteReconcile.apply(edited: [a], baseline: [a], disk: [external])
+        XCTAssertEqual(result.first?.template, "https://changed.example/?q={query}",
+                       "an untouched field should not be reverted to the window's stale copy")
+    }
+
+    func testFieldTheWindowChangedWins() {
+        let a = site("Alpha", "a")
+        var windowEdit = a
+        windowEdit.name = "Window Wins"
+        var external = a
+        external.name = "Agent Wrote"
+        let result = SiteReconcile.apply(edited: [windowEdit], baseline: [a], disk: [external])
+        XCTAssertEqual(result.first?.name, "Window Wins")
+    }
+
+    func testExternallyDeletedSiteIsNotResurrected() {
+        let a = site("Alpha", "a"), b = site("Beta", "b")
+        let result = SiteReconcile.apply(edited: [a, b], baseline: [a, b], disk: [a])
+        XCTAssertEqual(result.count, 1, "a site deleted by an agent came back")
+        XCTAssertNil(result.first { $0.id == b.id })
+    }
+}
+
 /// Records browser opens so search_site can be tested without launching one.
 final class OpenRecorder: @unchecked Sendable {
     private(set) var urls: [URL] = []
