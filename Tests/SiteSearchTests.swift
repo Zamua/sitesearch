@@ -411,6 +411,15 @@ final class ReleaseConfigTests: XCTestCase {
         XCTAssertTrue(project.contains("codeSign: true"),
                       "the copied sitesearch-mcp must be signed, or notarization rejects the bundle")
     }
+
+    /// Signing the nested binary is not enough - it needs the hardened runtime
+    /// in its own right. The app target having it does not cover the tool.
+    func testEmbeddedToolAlsoEnablesTheHardenedRuntime() throws {
+        let project = try read("project.yml")
+        let enabled = project.components(separatedBy: "ENABLE_HARDENED_RUNTIME: YES").count - 1
+        XCTAssertGreaterThanOrEqual(enabled, 2,
+                                    "both the app and the sitesearch-mcp target need the hardened runtime")
+    }
 }
 
 final class FaviconTests: XCTestCase {
