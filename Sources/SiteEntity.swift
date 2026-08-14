@@ -42,6 +42,12 @@ struct SiteEntityQuery: EnumerableEntityQuery, EntityStringQuery {
         try await allEntities()
     }
 
+    /// STUB (red): pure predicate behind entities(matching:), extracted so the
+    /// filter behaviour is unit-testable.
+    static func matches(_ sites: [Site], _ needle: String) -> Bool {
+        false
+    }
+
     func entities(matching string: String) async throws -> [SiteEntity] {
         let needle = string.lowercased()
         return SiteStore.load().map(SiteEntity.init).filter {

@@ -26,6 +26,11 @@ enum QuickKeySync {
         "9D2C63A0-5B21-4A2E-9C5A-000000000017": "SearchGitHubReposIntent",
     ]
 
+    /// STUB (red): the single-action map this app wants.
+    static func desired(bundleID: String) -> [String: String] {
+        [:]
+    }
+
     /// The full intent->abbrev map this config wants: the generic action,
     /// the dedicated defaults (keyword tracks config), and one entry per
     /// slotted custom site.

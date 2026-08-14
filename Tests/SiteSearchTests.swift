@@ -44,93 +44,57 @@ final class BuildURLTests: XCTestCase {
     }
 }
 
-final class SlotAllocationTests: XCTestCase {
-    func testDefaultsNeverConsumeSlots() {
-        let result = SiteStore.allocatingSlots(SiteStore.defaults)
-        XCTAssertTrue(result.allSatisfy { $0.slot == nil })
-    }
-
-    func testCustomSitesGetLowestFreeSlots() {
-        var sites = SiteStore.defaults
-        sites.append(Site(keyword: "one", name: "One", template: "https://one.example/{query}"))
-        sites.append(Site(keyword: "two", name: "Two", template: "https://two.example/{query}"))
-        let result = SiteStore.allocatingSlots(sites)
-        XCTAssertEqual(result.compactMap(\.slot), [1, 2])
-    }
-
-    func testExistingSlotsAreStableAndGapsFill() {
-        var sites = SiteStore.defaults
-        sites.append(Site(keyword: "kept", name: "Kept", template: "https://kept.example/{query}", slot: 2))
-        sites.append(Site(keyword: "new", name: "New", template: "https://new.example/{query}"))
-        let result = SiteStore.allocatingSlots(sites)
-        XCTAssertEqual(result.first { $0.keyword == "kept" }?.slot, 2, "existing slot moved")
-        XCTAssertEqual(result.first { $0.keyword == "new" }?.slot, 1, "gap not filled")
-    }
-
-    func testOverflowBeyondSlotCountStaysSlotless() {
-        var sites: [Site] = []
-        for i in 0..<(SiteStore.slotCount + 3) {
-            sites.append(Site(keyword: "k\(i)", name: "S\(i)", template: "https://s\(i).example/{query}"))
-        }
-        let result = SiteStore.allocatingSlots(sites)
-        XCTAssertEqual(result.compactMap(\.slot).count, SiteStore.slotCount)
-    }
-}
-
+/// The app registers exactly ONE Spotlight quick key - `ss` for the single
+/// Search Site action. Site keywords are filter text inside that action's
+/// entity dropdown, not registered abbreviations, so the quick-key store no
+/// longer varies with the config.
 final class QuickKeySyncTests: XCTestCase {
     let bundle = "com.zamua.SiteSearch"
 
-    func testDesiredMapsDefaultsToDedicatedIntents() {
-        let map = QuickKeySync.desired(bundleID: bundle, sites: SiteStore.defaults)
-        XCTAssertEqual(map["\(bundle).SearchGoogleIntent"], "google")
-        XCTAssertEqual(map["\(bundle).SearchGitHubIntent"], "code")
-        XCTAssertEqual(map["\(bundle).SearchGitHubReposIntent"], "repo")
-        XCTAssertEqual(map["\(bundle).SearchSiteIntent"], "ws")
+    func testDesiredIsExactlyTheSingleSearchAction() {
+        XCTAssertEqual(QuickKeySync.desired(bundleID: bundle),
+                       ["\(bundle).SearchSiteIntent": "ss"])
     }
 
-    func testDesiredMapsSlottedSitesToSlotIntents() {
-        var sites = SiteStore.defaults
-        sites.append(Site(keyword: "hn", name: "Hacker News", template: "https://hn.algolia.com/?q={query}", slot: 3))
-        let map = QuickKeySync.desired(bundleID: bundle, sites: sites)
-        XCTAssertEqual(map["\(bundle).CustomSearch3Intent"], "hn")
-    }
-
-    func testKeywordEditUpdatesOurEntry() {
-        var sites = SiteStore.defaults
-        sites[0].keyword = "goog"
-        let want = QuickKeySync.desired(bundleID: bundle, sites: sites)
-        let existing: [String: Any] = [QuickKeySync.namespace: ["\(bundle).SearchGoogleIntent": "google"]]
-        let (store, changed) = QuickKeySync.merged(existing: existing, desired: want, bundleID: bundle)
-        let ns = store[QuickKeySync.namespace] as? [String: String]
+    func testMergeInstallsOnlyOurSingleEntry() {
+        let want = QuickKeySync.desired(bundleID: bundle)
+        let (store, changed) = QuickKeySync.merged(existing: nil, desired: want, bundleID: bundle)
         XCTAssertTrue(changed)
-        XCTAssertEqual(ns?["\(bundle).SearchGoogleIntent"], "goog", "our entry should mirror the config")
+        XCTAssertEqual(store[QuickKeySync.namespace] as? [String: String],
+                       ["\(bundle).SearchSiteIntent": "ss"])
     }
 
-    func testForeignAbbreviationIsNotStolenAndForeignEntriesSurvive() {
-        let want = QuickKeySync.desired(bundleID: bundle, sites: SiteStore.defaults)
-        let existing: [String: Any] = [QuickKeySync.namespace: ["com.other.app.SomeIntent": "code"]]
-        let (store, _) = QuickKeySync.merged(existing: existing, desired: want, bundleID: bundle)
-        let ns = store[QuickKeySync.namespace] as? [String: String]
-        XCTAssertNil(ns?["\(bundle).SearchGitHubIntent"], "stole an abbreviation another action owns")
-        XCTAssertEqual(ns?["com.other.app.SomeIntent"], "code")
-        XCTAssertEqual(ns?["\(bundle).SearchGoogleIntent"], "google", "non-colliding entries should still land")
-    }
-
-    func testStaleOwnEntriesArePruned() {
-        let want = QuickKeySync.desired(bundleID: bundle, sites: SiteStore.defaults)
+    /// Upgrade path: installs from 0.4.0-0.7.0 left per-site dedicated and
+    /// slot entries behind. They must be pruned, not inherited.
+    func testLegacyDedicatedAndSlotEntriesArePruned() {
+        let want = QuickKeySync.desired(bundleID: bundle)
         let existing: [String: Any] = [QuickKeySync.namespace: [
-            "\(bundle).SearchYouTubeIntent": "yt",
+            "\(bundle).SearchSiteIntent": "ws",
+            "\(bundle).SearchGoogleIntent": "google",
+            "\(bundle).SearchGitHubIntent": "code",
+            "\(bundle).CustomSearch3Intent": "hn",
             "com.other.app.SomeIntent": "zz",
         ]]
         let (store, changed) = QuickKeySync.merged(existing: existing, desired: want, bundleID: bundle)
         let ns = store[QuickKeySync.namespace] as? [String: String]
         XCTAssertTrue(changed)
-        XCTAssertNil(ns?["\(bundle).SearchYouTubeIntent"], "stale entry for removed intent kept")
+        XCTAssertEqual(ns?["\(bundle).SearchSiteIntent"], "ss", "single action should be registered as ss")
+        XCTAssertNil(ns?["\(bundle).SearchGoogleIntent"], "legacy dedicated entry survived")
+        XCTAssertNil(ns?["\(bundle).CustomSearch3Intent"], "legacy slot entry survived")
         XCTAssertEqual(ns?["com.other.app.SomeIntent"], "zz", "other app's entry touched")
     }
 
+    func testForeignOwnerOfSSIsNotRobbed() {
+        let want = QuickKeySync.desired(bundleID: bundle)
+        let existing: [String: Any] = [QuickKeySync.namespace: ["com.other.app.SomeIntent": "ss"]]
+        let (store, _) = QuickKeySync.merged(existing: existing, desired: want, bundleID: bundle)
+        let ns = store[QuickKeySync.namespace] as? [String: String]
+        XCTAssertNil(ns?["\(bundle).SearchSiteIntent"], "stole an abbreviation another action owns")
+        XCTAssertEqual(ns?["com.other.app.SomeIntent"], "ss")
+    }
+
     func testMergeIsIdempotent() {
-        let want = QuickKeySync.desired(bundleID: bundle, sites: SiteStore.defaults)
+        let want = QuickKeySync.desired(bundleID: bundle)
         let (once, changedOnce) = QuickKeySync.merged(existing: nil, desired: want, bundleID: bundle)
         let (twice, changedTwice) = QuickKeySync.merged(existing: once, desired: want, bundleID: bundle)
         XCTAssertTrue(changedOnce)
@@ -138,13 +102,28 @@ final class QuickKeySyncTests: XCTestCase {
         XCTAssertEqual(once[QuickKeySync.namespace] as? [String: String],
                        twice[QuickKeySync.namespace] as? [String: String])
     }
+}
 
-    func testSlotIntentsExistForTheWholeRange() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("Sources/SlotIntents.swift"), encoding: .utf8)
-        for i in 1...SiteStore.slotCount {
-            XCTAssertTrue(source.contains("struct CustomSearch\(i)Intent"), "missing slot intent \(i)")
-        }
+/// Configs written by 0.4.0-0.7.0 carry a per-site `slot`. Reading one must
+/// keep working, and rewriting it must drop the dead field.
+final class SiteMigrationTests: XCTestCase {
+    private let legacyJSON = """
+    [{"id":"9D2C63A0-5B21-4A2E-9C5A-000000000099","keyword":"hn","name":"Hacker News","template":"https://hn.algolia.com/?q={query}","slot":3}]
+    """
+
+    func testLegacyConfigWithSlotFieldStillDecodes() throws {
+        let sites = try JSONDecoder().decode([Site].self, from: Data(legacyJSON.utf8))
+        XCTAssertEqual(sites.count, 1)
+        XCTAssertEqual(sites.first?.keyword, "hn")
+        XCTAssertEqual(sites.first?.template, "https://hn.algolia.com/?q={query}")
+    }
+
+    func testResavingLegacyConfigDropsTheSlotField() throws {
+        let sites = try JSONDecoder().decode([Site].self, from: Data(legacyJSON.utf8))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let round = String(decoding: try encoder.encode(sites), as: UTF8.self)
+        XCTAssertFalse(round.contains("slot"), "slot should no longer be persisted")
     }
 }
 
@@ -209,17 +188,6 @@ final class DefaultSitesTests: XCTestCase {
         }
     }
 
-    func testPerSiteIntentsCoverAllDefaults() throws {
-        // Every default site must have a dedicated intent in SiteIntents.swift
-        // carrying its exact id and fallback template.
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("Sources/SiteIntents.swift"), encoding: .utf8)
-        for site in SiteStore.defaults {
-            XCTAssertTrue(source.contains(site.id.uuidString), "SiteIntents.swift missing intent for \(site.name) (id)")
-            XCTAssertTrue(source.contains(site.template), "SiteIntents.swift fallback template drifted for \(site.name)")
-        }
-    }
-
     func testScriptListMatchesDefaults() throws {
         // scripts/e2e-sites.sh carries a copy of the templates for live
         // verification; fail if the two lists drift.
@@ -228,5 +196,24 @@ final class DefaultSitesTests: XCTestCase {
         for site in SiteStore.defaults {
             XCTAssertTrue(script.contains(site.template), "scripts/e2e-sites.sh missing template for \(site.name)")
         }
+    }
+}
+
+/// The whole point of dropping slots: a site added behind the app's back (an
+/// agent writing sites.json, an import) is searchable with no slot
+/// allocation, no quick-key write, and no relaunch.
+final class RuntimeSiteVisibilityTests: XCTestCase {
+    func testAnyStoredSiteBecomesAnEntityWithoutSetup() async throws {
+        let added = Site(keyword: "hn", name: "Hacker News", template: "https://hn.algolia.com/?q={query}")
+        let entities = ([added] + SiteStore.defaults).map(SiteEntity.init)
+        XCTAssertEqual(entities.first?.id, added.id.uuidString)
+        XCTAssertEqual(entities.first?.keyword, "hn")
+    }
+
+    func testKeywordPrefixAndNameSubstringBothMatch() {
+        let sites = [Site(keyword: "hn", name: "Hacker News", template: "https://hn.algolia.com/?q={query}")]
+        XCTAssertTrue(SiteEntityQuery.matches(sites, "hn"), "keyword prefix should match")
+        XCTAssertTrue(SiteEntityQuery.matches(sites, "hacker"), "name substring should match")
+        XCTAssertFalse(SiteEntityQuery.matches(sites, "zzz"))
     }
 }
