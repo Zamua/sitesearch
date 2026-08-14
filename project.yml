@@ -80,6 +80,9 @@ targets:
       base:
         PRODUCT_NAME: sitesearch-mcp
         SWIFT_VERSION: "6.0"
+        # Nested executables need this in their own right; inheriting from the
+        # app target does not happen, and notarization checks every binary.
+        ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_IDENTITY: "Apple Development"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 7FDZK7U8A6
