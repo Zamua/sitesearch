@@ -156,7 +156,7 @@ stale one if a build ever complains about ambiguity.
 
 - `make build` - xcodegen (via nix) + xcodebuild Release into `.build/`.
   The .xcodeproj is generated; project.yml is the source of truth.
-- `make test` - 80 unit tests (URL building, defaults integrity, quick-key
+- `make test` - 97 unit tests (URL building, defaults integrity, quick-key
   merge + legacy pruning, slot-config migration, entity filtering, site
   operations, locked mutation, MCP protocol + tools, share/import round-trip).
   Note the test host IS the app binary, so a trap inside a test (a force
