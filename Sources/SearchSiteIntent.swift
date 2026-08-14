@@ -18,9 +18,12 @@ struct SearchSiteIntent: AppIntent {
     @Parameter(title: "Query")
     var query: String?
 
-    // Every required no-default parameter MUST appear here, or the action is
-    // silently excluded from Spotlight. Site comes first so text typed right
-    // after a quick key filters the site dropdown.
+    // Site comes first so text typed right after the quick key filters the
+    // dropdown, and `query` MUST stay in the Summary sentence: moving it to the
+    // trailing parameter list stops Spotlight offering it inline, which kills
+    // one-line search (verified on 26.5). The cost is that the sentence reads
+    // "for query" even for a bookmark, which has nothing to search - cosmetic,
+    // and there is no way to vary a summary per selected entity.
     static var parameterSummary: some ParameterSummary {
         Summary("Search \(\.$site) for \(\.$query)")
     }
