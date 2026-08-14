@@ -20,14 +20,24 @@ targets:
       - target: sitesearch-mcp
         copy:
           destination: executables
+          # Nested executables must carry their own signature or notarization
+          # rejects the bundle. NB: adding `embed: false` here silently drops
+          # the whole copy phase.
+          codeSign: true
     scheme:
       testTargets:
         - SiteSearchTests
     info:
       path: Sources/Info.plist
       properties:
+        # This plist is GENERATED from here on every `xcodegen generate` -
+        # editing Sources/Info.plist directly is silently undone. Omitting
+        # these two is why every build from 0.7.0 on reported version 1.0.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "26.0"
         LSApplicationCategoryType: public.app-category.productivity
-        NSHumanReadableCopyright: ""
+        NSHumanReadableCopyright: "Copyright (c) 2026 Zamua Nasrawt. MIT licensed."
         CFBundleDocumentTypes:
           - CFBundleTypeName: SiteSearch Sites
             CFBundleTypeRole: Viewer
@@ -52,7 +62,7 @@ targets:
         CODE_SIGN_IDENTITY: "Apple Development"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 7FDZK7U8A6
-        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES
   # Stdio MCP server for agents: add/update/remove/search sites without the
   # GUI. Ships inside the .app at Contents/MacOS/sitesearch-mcp.
