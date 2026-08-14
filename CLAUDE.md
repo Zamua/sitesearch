@@ -137,6 +137,10 @@ stale one if a build ever complains about ambiguity.
 - **Parameterized App Shortcut phrases** do NOT surface as typeable Spotlight
   actions on 26.5. Removed in 0.8.0; only the plain phrase remains.
 - **Accept-suggestion keystroke** in the Spotlight dropdown is Tab.
+- **Spotlight DOES call `entities(matching:)`** for the inline parameter
+  filter, so keyword matching works: verified 2026-08-13 on 26.5 with `ss`
+  then `code`, which surfaces GitHub even though "code" appears nowhere in
+  the title. Keywords are real filter text, not decoration.
 
 ## Design direction (0.8.0)
 
@@ -172,12 +176,6 @@ transaction makes the overwrite atomic, not correct. The plan:
 
 ## Known unknowns (prototype findings go here)
 
-- **Load-bearing since 0.8.0:** whether Spotlight's inline type-to-filter
-  actually calls `entities(matching:)` (keyword prefix matching) or filters
-  the enumerated list by title on its own. If titles only, `ss hn` will not
-  find "Hacker News" and keywords are decorative in the dropdown - the
-  mitigation would be folding the keyword into the entity title. Probe: `ss`
-  then `code`, which must surface GitHub ("code" is not in "GitHub").
 - Whether a newly added site appears in the dropdown without relaunching.
   `allEntities()` reads fresh from disk, but Spotlight's entity caching is
   unverified for additions.
