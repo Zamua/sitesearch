@@ -367,6 +367,161 @@ final class SiteStoreMutationTests: XCTestCase {
     }
 }
 
+/// Records browser opens so search_site can be tested without launching one.
+final class OpenRecorder: @unchecked Sendable {
+    private(set) var urls: [URL] = []
+    func record(_ url: URL) -> Bool {
+        urls.append(url)
+        return true
+    }
+}
+
+final class MCPHandlerTests: XCTestCase {
+    private var tmp: URL!
+    private var recorder: OpenRecorder!
+    private var handler: MCPHandler!
+    private var file: URL { tmp.appendingPathComponent("sites.json") }
+
+    override func setUpWithError() throws {
+        tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sitesearch-mcp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        SiteStore.save(SiteStore.defaults, to: file)
+        let recorder = OpenRecorder()
+        self.recorder = recorder
+        handler = MCPHandler(storeURL: file, opener: { recorder.record($0) })
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tmp)
+    }
+
+    // MARK: helpers
+
+    private func request(_ method: String, _ params: [String: Any]? = nil, id: Int? = 1) -> [String: Any] {
+        var req: [String: Any] = ["jsonrpc": "2.0", "method": method]
+        if let id { req["id"] = id }
+        if let params { req["params"] = params }
+        return req
+    }
+
+    private func callTool(_ name: String, _ arguments: [String: Any]) throws -> (text: String, isError: Bool) {
+        let response = try XCTUnwrap(handler.handle(request("tools/call", ["name": name, "arguments": arguments])))
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        let text = try XCTUnwrap(content.first?["text"] as? String)
+        return (text, result["isError"] as? Bool ?? false)
+    }
+
+    // MARK: protocol
+
+    func testInitializeAdvertisesToolsCapability() throws {
+        let response = try XCTUnwrap(handler.handle(request("initialize", ["protocolVersion": "2025-06-18"])))
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        XCTAssertEqual(response["jsonrpc"] as? String, "2.0")
+        XCTAssertEqual(result["protocolVersion"] as? String, "2025-06-18")
+        let capabilities = try XCTUnwrap(result["capabilities"] as? [String: Any])
+        XCTAssertNotNil(capabilities["tools"])
+        let info = try XCTUnwrap(result["serverInfo"] as? [String: Any])
+        XCTAssertEqual(info["name"] as? String, MCPHandler.serverName)
+    }
+
+    func testNotificationGetsNoResponse() {
+        XCTAssertNil(handler.handle(request("notifications/initialized", nil, id: nil)))
+    }
+
+    func testUnknownMethodIsMethodNotFound() throws {
+        let response = try XCTUnwrap(handler.handle(request("does/notExist")))
+        let error = try XCTUnwrap(response["error"] as? [String: Any])
+        XCTAssertEqual(error["code"] as? Int, -32601)
+    }
+
+    func testToolsListAdvertisesEveryTool() throws {
+        let response = try XCTUnwrap(handler.handle(request("tools/list")))
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        let tools = try XCTUnwrap(result["tools"] as? [[String: Any]])
+        let names = Set(tools.compactMap { $0["name"] as? String })
+        XCTAssertEqual(names, ["list_sites", "add_site", "update_site", "remove_site", "search_site"])
+        for tool in tools {
+            XCTAssertNotNil(tool["description"] as? String, "\(tool["name"] ?? "?") needs a description")
+            XCTAssertNotNil(tool["inputSchema"] as? [String: Any], "\(tool["name"] ?? "?") needs an inputSchema")
+        }
+    }
+
+    func testCallingAnUnknownToolIsAnError() throws {
+        let response = try XCTUnwrap(handler.handle(request("tools/call", ["name": "nope", "arguments": [:]])))
+        XCTAssertNotNil(response["error"], "unknown tool should be a protocol error")
+    }
+
+    // MARK: tools
+
+    func testListSitesReturnsTheConfiguredSites() throws {
+        let (text, isError) = try callTool("list_sites", [:])
+        XCTAssertFalse(isError)
+        XCTAssertTrue(text.contains("google"), "expected default keywords in: \(text)")
+        XCTAssertTrue(text.contains("GitHub"))
+    }
+
+    func testAddSitePersistsAndIsImmediatelySearchable() throws {
+        let (text, isError) = try callTool("add_site", [
+            "name": "Hacker News", "keyword": "hn", "template": "https://hn.algolia.com/?q={query}",
+        ])
+        XCTAssertFalse(isError, "add failed: \(text)")
+        let stored = SiteStore.load(from: file)
+        XCTAssertNotNil(SiteOps.find(stored, "hn"), "site was not persisted")
+        XCTAssertEqual(stored.count, SiteStore.defaults.count + 1)
+    }
+
+    func testAddSiteWithABadTemplateIsAToolErrorNotACrash() throws {
+        let (text, isError) = try callTool("add_site", [
+            "name": "Bad", "keyword": "bad", "template": "https://x.example/search",
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(text.contains("{query}"), "error should name the missing placeholder: \(text)")
+        XCTAssertEqual(SiteStore.load(from: file).count, SiteStore.defaults.count, "failed add wrote anyway")
+    }
+
+    func testAddSiteRejectsADuplicateKeyword() throws {
+        let (text, isError) = try callTool("add_site", [
+            "name": "Another Google", "keyword": "google", "template": "https://g.example/?q={query}",
+        ])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(text.lowercased().contains("google"), "error should name the clash: \(text)")
+    }
+
+    func testUpdateSiteChangesOnlyWhatWasPassed() throws {
+        let (text, isError) = try callTool("update_site", ["site": "code", "keyword": "gh"])
+        XCTAssertFalse(isError, "update failed: \(text)")
+        let stored = SiteStore.load(from: file)
+        let site = try XCTUnwrap(SiteOps.find(stored, "gh"))
+        XCTAssertEqual(site.name, "GitHub", "name should be untouched")
+    }
+
+    func testRemoveSiteByKeyword() throws {
+        let (_, isError) = try callTool("remove_site", ["site": "code"])
+        XCTAssertFalse(isError)
+        XCTAssertNil(SiteOps.find(SiteStore.load(from: file), "code"))
+    }
+
+    func testSearchSiteOpensTheBuiltURL() throws {
+        let (text, isError) = try callTool("search_site", ["site": "google", "query": "hello world"])
+        XCTAssertFalse(isError, "search failed: \(text)")
+        XCTAssertEqual(recorder.urls.map(\.absoluteString),
+                       ["https://www.google.com/search?q=hello%20world"])
+    }
+
+    func testSearchingAnUnknownSiteIsAToolError() throws {
+        let (_, isError) = try callTool("search_site", ["site": "nope", "query": "x"])
+        XCTAssertTrue(isError)
+        XCTAssertTrue(recorder.urls.isEmpty, "should not have opened anything")
+    }
+
+    func testMissingRequiredArgumentIsAToolError() throws {
+        let (_, isError) = try callTool("add_site", ["name": "No Keyword"])
+        XCTAssertTrue(isError)
+    }
+}
+
 /// The whole point of dropping slots: a site added behind the app's back (an
 /// agent writing sites.json, an import) is searchable with no slot
 /// allocation, no quick-key write, and no relaunch.
