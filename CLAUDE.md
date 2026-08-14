@@ -30,6 +30,30 @@ Model / storage:
   (`.urlQueryAllowed` would pass `&`, `=`, `+` through), plus `{query}` and
   http(s)-scheme validation.
 
+Config changes and agent access:
+
+- `Sources/SiteOps.swift` - pure, intent-shaped operations (add one, update
+  fields of one, remove one) plus `SiteOpError`. Never whole-list replacement:
+  that is what let a stale snapshot clobber a concurrent write. Selectors
+  accept an id or a keyword. Templates are validated with the same builder the
+  search uses, so a site that stores cannot fail only at search time. Adding a
+  duplicate keyword is an error here (an agent asked for `hn` and should be
+  told), unlike import-merge which suffixes on purpose.
+- `Sources/SiteURL.swift` - `SiteURL.build` + `SearchSiteError`, Foundation
+  only, so the CLI can validate without importing AppIntents.
+  `SearchSiteIntent.buildURL` forwards to it.
+- `Sources/MCPHandler.swift` - the MCP server as a pure function of (request,
+  config URL), with an injectable `opener` so `search_site` is testable without
+  launching a browser. Shared by both targets so the unit tests can reach it.
+  Tool failures come back as results with `isError`, not JSON-RPC errors: the
+  call worked, the operation did not, and the agent needs to read why.
+- `Sources/MCPMain/main.swift` - the stdio loop. EXCLUDED from the app target
+  in project.yml (top-level code cannot coexist with the app's `@main`); built
+  as the `sitesearch-mcp` tool target and copied into
+  `Contents/MacOS/sitesearch-mcp` via a dependency `copy: destination:
+  executables`. Note `embed: false` on that dependency silently suppresses the
+  copy phase - do not add it back.
+
 Quick keys:
 
 - `Sources/QuickKeySync.swift` - registers exactly ONE quick key, `ss`, for
@@ -117,9 +141,12 @@ stale one if a build ever complains about ambiguity.
 
 - `make build` - xcodegen (via nix) + xcodebuild Release into `.build/`.
   The .xcodeproj is generated; project.yml is the source of truth.
-- `make test` - 26 unit tests (URL building, defaults integrity, quick-key
-  merge + legacy pruning, slot-config migration, entity filtering,
-  share/import round-trip).
+- `make test` - 57 unit tests (URL building, defaults integrity, quick-key
+  merge + legacy pruning, slot-config migration, entity filtering, site
+  operations, locked mutation, MCP protocol + tools, share/import round-trip).
+  Note the test host IS the app binary, so a trap inside a test (a force
+  unwrap of a stub's nil) kills the runner mid-suite and pops a macOS crash
+  dialog. Use `XCTUnwrap`, never `!`, especially in red-phase tests.
 - `make e2e` - `scripts/e2e-sites.sh` GETs every default template against the
   live site with a browser UA. Pass = HTTP < 400; 403/429/503 report as GATED
   (bot-blocked, not a failure - the URL still routes correctly). A unit test
@@ -157,22 +184,30 @@ are gone, deliberately trading one-line search (`repo foo`) for:
   quick-key writes only ever happened inside the GUI save path, so agent-added
   sites silently never got the one-line treatment.
 
-Next up: an MCP server so agents can manage sites (a stdio binary in the
-bundle, sharing `Site.swift`), favicons in the dropdown via
-`DisplayRepresentation(image:)`, and a redesign of `.sitesearch` sharing.
-Storage stays plain JSON - see the concurrency note below.
+The MCP server (0.9.0) is the payoff: "add a site" is now just an append to
+`sites.json`. Still to come: favicons in the dropdown via
+`DisplayRepresentation(image:)` - which has `init(data:)` and `init(url:)`,
+verified in the 26.5 SDK - and a redesign of `.sitesearch` sharing. Storage
+stays plain JSON: it is diffable, git-able, hand-editable, and the thing
+feature #3 wants to share. See Concurrency.
 
-## Concurrency (planned, not yet implemented)
+## Concurrency
 
-Two writers are coming: the config window and the MCP server. The hazard is
-NOT torn writes (`save` is already atomic) but a lost update - `ConfigView`
-holds the whole list in `@State` and writes all of it back on a debounce, so
-it would clobber a site added underneath it. SQLite does not fix this; a
-transaction makes the overwrite atomic, not correct. The plan:
+Two writers: the config window and the MCP server. The hazard is NOT torn
+writes (`save` is atomic) but a lost update - a caller holding a stale list
+writes all of it back and erases what the other one added. SQLite would not
+fix this; a transaction makes the overwrite atomic, not correct.
 
-1. Writes express intent (add/update one site), never whole-array replacement.
-2. `flock` around read-modify-write to serialize across processes.
-3. A file watch in `ConfigView` so the window cannot hold a stale snapshot.
+1. DONE - writes express intent (`SiteOps`), never whole-array replacement.
+2. DONE - `SiteStore.mutate` re-reads under an exclusive `flock` and persists,
+   so a stale caller cannot clobber. The lock is a `sites.json.lock` sidecar:
+   locking sites.json itself would race with the atomic replace in `save`,
+   which swaps the inode out from under the holder. A lock that cannot be
+   taken degrades to running unlocked rather than bricking the app.
+3. TODO - `ConfigView` still holds the whole list in `@State` and saves all of
+   it on a 400ms debounce, so the window remains the one component that can
+   clobber an agent's write. It needs a file watch plus per-field writes
+   through `SiteOps`.
 
 ## Known unknowns (prototype findings go here)
 

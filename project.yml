@@ -9,7 +9,17 @@ targets:
     type: application
     platform: macOS
     sources:
-      - Sources
+      # MCPMain is the CLI's top-level entry point; it must not be compiled
+      # into the app (two @main-equivalents). The handler it drives lives in
+      # Sources/MCPHandler.swift, which both targets share so the unit tests
+      # can reach it.
+      - path: Sources
+        excludes:
+          - "MCPMain/**"
+    dependencies:
+      - target: sitesearch-mcp
+        copy:
+          destination: executables
     scheme:
       testTargets:
         - SiteSearchTests
@@ -36,7 +46,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zamua.SiteSearch
         PRODUCT_NAME: SiteSearch
-        MARKETING_VERSION: "0.8.0"
+        MARKETING_VERSION: "0.9.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         CODE_SIGN_IDENTITY: "Apple Development"
@@ -44,6 +54,25 @@ targets:
         DEVELOPMENT_TEAM: 7FDZK7U8A6
         ENABLE_HARDENED_RUNTIME: NO
         COMBINE_HIDPI_IMAGES: YES
+  # Stdio MCP server for agents: add/update/remove/search sites without the
+  # GUI. Ships inside the .app at Contents/MacOS/sitesearch-mcp.
+  sitesearch-mcp:
+    type: tool
+    platform: macOS
+    sources:
+      - Sources/MCPMain
+      - Sources/MCPHandler.swift
+      - Sources/Site.swift
+      - Sources/SiteOps.swift
+      - Sources/SiteURL.swift
+    settings:
+      base:
+        PRODUCT_NAME: sitesearch-mcp
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 7FDZK7U8A6
+
   SiteSearchTests:
     type: bundle.unit-test
     platform: macOS

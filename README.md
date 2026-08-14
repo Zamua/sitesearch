@@ -21,6 +21,33 @@ Sites live in `~/Library/Application Support/SiteSearch/sites.json` as plain
 JSON (version-control it if you like). The URL template uses the literal
 placeholder `{query}`, e.g. `https://github.com/search?q={query}`.
 
+## Agent access (MCP)
+
+The bundle ships a stdio MCP server so an agent can manage sites without the
+GUI. Point any MCP client at it:
+
+```json
+{
+  "mcpServers": {
+    "sitesearch": {
+      "command": "/Applications/SiteSearch.app/Contents/MacOS/sitesearch-mcp"
+    }
+  }
+}
+```
+
+Claude Code:
+
+```sh
+claude mcp add sitesearch /Applications/SiteSearch.app/Contents/MacOS/sitesearch-mcp
+```
+
+Tools: `list_sites`, `add_site`, `update_site`, `remove_site`, and
+`search_site` (which opens the search in your browser). A site added this way
+is searchable in Spotlight immediately - no relaunch, no setup step. Writes
+are serialized with a file lock, so the agent and the config window can both
+be open without either clobbering the other.
+
 ## Build
 
 Requires Xcode 26 (the macOS 26 SDK) and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
