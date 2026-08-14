@@ -20,7 +20,7 @@ and drag it to /Applications.
 
 ## How it works
 
-The app exposes a single App Intent, "Search Site", with two parameters:
+The app exposes two App Intents. "Search Site" takes two parameters:
 
 - **Site**: an `AppEntity` backed by your configured site list. Spotlight
   renders it as a dropdown and filters it as you type.
@@ -30,9 +30,10 @@ Sites live in `~/Library/Application Support/SiteSearch/sites.json` as plain
 JSON (version-control it if you like). The URL template uses the literal
 placeholder `{query}`, e.g. `https://github.com/search?q={query}`.
 
-Leave `{query}` out and the entry becomes a **bookmark**: `ss repo1` opens it
-directly, no query step. Searches and bookmarks share one list and one set of
-keywords, so `ss repo` shows your `repo` search next to `repo1` and `repo2`.
+Leave `{query}` out and the entry becomes a **bookmark**, opened by the second
+intent: `sb repo1` + Return, no query step. One list holds both kinds; each
+action's dropdown lists only its own kind, so `ss` offers searches and `sb`
+offers bookmarks.
 
 Each site's favicon is fetched from that site's own origin when you add it -
 never through a third-party favicon service - and cached alongside the config
@@ -77,14 +78,16 @@ make install   # generate project, build Release, copy to /Applications, launch
 ## First-time Spotlight setup
 
 1. Launch the app once. That registers it with Launch Services and asks
-   Spotlight for the quick key `ss`.
-2. Use it: Cmd-Space, `ss git`, Tab, your query, Return.
+   Spotlight for the quick keys `ss` (search) and `sb` (bookmark).
+2. Use them: Cmd-Space, `ss git`, Tab, your query, Return. Or `sb repo1`,
+   Return.
 
-If `ss` does nothing, assign it by hand once: Cmd-Space, Cmd-3 (Actions),
-find "Search Site", "Add quick keys", type `ss`. (Another app may already
-own the abbreviation, in which case pick a different one - the app never
-takes an abbreviation something else has claimed.)
+If a quick key does nothing, assign it by hand once: Cmd-Space, Cmd-3
+(Actions), find "Search Site" or "Open Bookmark", "Add quick keys", type the
+abbreviation. (Another app may already own it, in which case pick a different
+one - the app never takes an abbreviation something else has claimed.)
 
-Adding sites needs no setup at all. There is one action and one quick key;
-a site you add - in the window, by importing a `.sitesearch` file, or by
-editing `sites.json` directly - is searchable immediately, no relaunch.
+Adding sites needs no setup at all. The quick keys are fixed and do not vary
+with the config, so a site you add - in the window, by importing a
+`.sitesearch` file, or by editing `sites.json` directly - is searchable
+immediately, no relaunch.

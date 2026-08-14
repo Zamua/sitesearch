@@ -23,12 +23,18 @@ Model / storage:
   UUID string (stable across renames), keyword is the subtitle. `filter(_:
   matching:)` is the pure predicate behind `entities(matching:)` - name
   substring OR keyword prefix - extracted so it is unit-testable.
-- `Sources/SearchSiteIntent.swift` - THE intent, and as of 0.8.0 the only one:
-  two parameters (site entity + query). `supportedModes: .background`
+- `Sources/SearchSiteIntent.swift` - the search intent: two parameters (site
+  entity + query). `supportedModes: .background`
   (macOS 26 API) so the app never foregrounds; `perform()` opens the URL via
   `NSWorkspace.shared.open`. Owns `buildURL`: RFC 3986 unreserved chars only
   (`.urlQueryAllowed` would pass `&`, `=`, `+` through), plus `{query}` and
   http(s)-scheme validation.
+- `Sources/OpenBookmarkIntent.swift` - the bookmark intent: one parameter, no
+  query. Separate from the search intent because Spotlight cannot vary a
+  `parameterSummary` per selected entity; the header comment records the three
+  single-action shapes tried and how each failed on 26.5. `BookmarkEntity`
+  lives in `SiteEntity.swift` and is a distinct type on purpose - a dropdown
+  comes from the entity's `defaultQuery`, so two lists means two types.
 
 Config changes and agent access:
 
@@ -42,11 +48,12 @@ Config changes and agent access:
 - `Sources/SiteURL.swift` - `SiteURL.resolve/build` + `SearchSiteError`,
   Foundation only, so the CLI can validate without importing AppIntents.
   A site's KIND is inferred from its template, not stored: with `{query}` it
-  is a search, without it is a bookmark that opens as-is (`ss repo1`). One
-  model, one dropdown, one keyword namespace - so `ss repo` surfaces the
-  `repo` search alongside `repo1`/`repo2` bookmarks. `resolve` handles both;
-  `build` stays strict for the search path. A search run with no query
-  resolves to the bare search page rather than failing.
+  is a search, without it is a bookmark that opens as-is (`sb repo1`). One
+  model and one keyword namespace, but two dropdowns - `Site.searches` /
+  `Site.bookmarks` split the list per action, since an action whose summary
+  demands a query cannot also serve entries that have nothing to substitute.
+  `resolve` handles both; `build` stays strict for the search path. A search
+  run with no query resolves to the bare search page rather than failing.
 - `Sources/Favicon.swift` - fetches each site's icon FROM ITS OWN ORIGIN (a
   third-party favicon proxy would report every configured site to someone
   else), caching bytes at `icons/<site-uuid>` so `sites.json` stays clean
@@ -71,10 +78,11 @@ Config changes and agent access:
 
 Quick keys:
 
-- `Sources/QuickKeySync.swift` - registers exactly ONE quick key, `ss`, for
-  the single action (see the undocumented key below). It does not vary with
-  the config: site keywords are filter text inside the entity dropdown, not
-  registered abbreviations, so adding a site writes nothing here. Entries
+- `Sources/QuickKeySync.swift` - registers exactly two quick keys, `ss` for
+  search and `sb` for bookmarks, one per action (see the undocumented key
+  below). Neither varies with the config: site keywords are filter text inside
+  the entity dropdown, not registered abbreviations, so adding a site writes
+  nothing here. Entries
   belonging to other apps are never touched, an abbreviation another app's
   action already claims is never stolen, and any per-site entry left behind by
   0.4.0-0.7.0 is pruned by the same "our prefix becomes exactly desired" rule.
@@ -156,9 +164,10 @@ stale one if a build ever complains about ambiguity.
 
 - `make build` - xcodegen (via nix) + xcodebuild Release into `.build/`.
   The .xcodeproj is generated; project.yml is the source of truth.
-- `make test` - 97 unit tests (URL building, defaults integrity, quick-key
-  merge + legacy pruning, slot-config migration, entity filtering, site
-  operations, locked mutation, MCP protocol + tools, share/import round-trip).
+- `make test` - 99 unit tests (URL building, defaults integrity, quick-key
+  merge + legacy pruning, slot-config migration, entity filtering, search /
+  bookmark split, site operations, locked mutation, MCP protocol + tools,
+  share/import round-trip).
   Note the test host IS the app binary, so a trap inside a test (a force
   unwrap of a stub's nil) kills the runner mid-suite and pops a macOS crash
   dialog. Use `XCTUnwrap`, never `!`, especially in red-phase tests.
@@ -186,9 +195,11 @@ stale one if a build ever complains about ambiguity.
 
 ## Design direction (0.8.0)
 
-One action, one quick key. `ss` -> Tab -> pick or type a site keyword ->
-query. The per-site dedicated intents and the 20 `CustomSearchNIntent` slots
-are gone, deliberately trading one-line search (`repo foo`) for:
+A fixed set of actions, one quick key each - `ss` -> Tab -> pick or type a
+site keyword -> query, and `sb` -> pick a bookmark. What matters is that the
+count is bounded by KINDS of thing, not by how many sites exist. The per-site
+dedicated intents and the 20 `CustomSearchNIntent` slots are gone,
+deliberately trading one-line search (`repo foo`) for:
 
 - no ceiling on the number of sites (slots capped it at 20),
 - real site names in the dropdown instead of "Custom Search 3",
