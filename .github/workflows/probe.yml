@@ -1,0 +1,15 @@
+name: probe
+on: workflow_dispatch
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: |
+          echo "runner: ${{ matrix.os }}"
+          sw_vers
+          ls /Applications | grep -i '^Xcode' || echo "no xcode dirs"
+          xcodebuild -version || true
