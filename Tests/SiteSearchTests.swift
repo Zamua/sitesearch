@@ -1010,11 +1010,13 @@ final class RuntimeSiteVisibilityTests: XCTestCase {
 }
 
 final class LinkInferenceTests: XCTestCase {
-    func testGitHubRepoLinkBecomesRepoScopedSearch() throws {
+    func testGitHubRepoLinkBecomesABookmarkOfTheRepo() throws {
         let hit = try XCTUnwrap(LinkInference.infer(from: "https://github.com/Zamua/sitesearch"))
         XCTAssertEqual(hit.name, "sitesearch")
         XCTAssertEqual(hit.keyword, "sitesearch")
-        XCTAssertEqual(hit.template, "https://github.com/search?q=repo%3AZamua%2Fsitesearch+{query}")
+        // No {query}: the inferred entry is a bookmark, so it lands in the
+        // sb action and opens the repo page directly.
+        XCTAssertEqual(hit.template, "https://github.com/Zamua/sitesearch")
     }
 
     func testDeepRepoPathsAndGitSuffixStillResolveTheRepo() throws {
@@ -1043,10 +1045,11 @@ final class LinkInferenceTests: XCTestCase {
         XCTAssertNil(LinkInference.infer(from: "file:///etc/hosts"))
     }
 
-    func testInferredTemplateBuildsAValidSearchURL() throws {
+    func testInferredEntryIsABookmarkAndResolvesDirectly() throws {
         let hit = try XCTUnwrap(LinkInference.infer(from: "https://github.com/Zamua/sitesearch"))
-        let url = try SiteURL.build(template: hit.template, query: "favicon cache")
-        XCTAssertEqual(url.host, "github.com")
-        XCTAssertTrue(url.absoluteString.contains("repo%3AZamua%2Fsitesearch"))
+        let site = Site(keyword: hit.keyword, name: hit.name, template: hit.template)
+        XCTAssertTrue(site.isBookmark)
+        let url = try SiteURL.resolve(template: hit.template, query: nil)
+        XCTAssertEqual(url.absoluteString, "https://github.com/Zamua/sitesearch")
     }
 }

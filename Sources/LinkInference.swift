@@ -30,10 +30,11 @@ enum LinkInference {
     }
 }
 
-/// github.com/<owner>/<repo>[/...] becomes a search scoped to that repo:
-/// the repo name is both display name and keyword, and the template searches
-/// within the repository. Non-repo GitHub paths (orgs, gists, marketplace,
-/// search itself) are declined rather than guessed at.
+/// github.com/<owner>/<repo>[/...] becomes a BOOKMARK of the repo page:
+/// the repo name is both display name and keyword, and the template is the
+/// repo URL with no {query} - so it lands in the `sb` action and opens
+/// directly. Non-repo GitHub paths (orgs, gists, marketplace, search itself)
+/// are declined rather than guessed at.
 struct GitHubRepoInferrer: LinkInferrer {
     private static let nonRepoOwners: Set<String> = [
         "features", "topics", "collections", "trending", "marketplace",
@@ -53,7 +54,7 @@ struct GitHubRepoInferrer: LinkInferrer {
         return InferredSite(
             name: repo,
             keyword: repo.lowercased(),
-            template: "https://github.com/search?q=repo%3A\(owner)%2F\(repo)+{query}"
+            template: "https://github.com/\(owner)/\(repo)"
         )
     }
 }
