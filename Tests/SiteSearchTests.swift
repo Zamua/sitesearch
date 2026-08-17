@@ -1008,3 +1008,45 @@ final class RuntimeSiteVisibilityTests: XCTestCase {
         XCTAssertFalse(SiteEntityQuery.matches(sites, "zzz"))
     }
 }
+
+final class LinkInferenceTests: XCTestCase {
+    func testGitHubRepoLinkBecomesRepoScopedSearch() throws {
+        let hit = try XCTUnwrap(LinkInference.infer(from: "https://github.com/Zamua/sitesearch"))
+        XCTAssertEqual(hit.name, "sitesearch")
+        XCTAssertEqual(hit.keyword, "sitesearch")
+        XCTAssertEqual(hit.template, "https://github.com/search?q=repo%3AZamua%2Fsitesearch+{query}")
+    }
+
+    func testDeepRepoPathsAndGitSuffixStillResolveTheRepo() throws {
+        let deep = try XCTUnwrap(LinkInference.infer(from: "https://github.com/apple/swift/tree/main/stdlib"))
+        XCTAssertEqual(deep.name, "swift")
+        let cloneURL = try XCTUnwrap(LinkInference.infer(from: "https://github.com/apple/swift.git"))
+        XCTAssertEqual(cloneURL.name, "swift")
+    }
+
+    func testKeywordIsLowercasedEvenWhenRepoIsNot() throws {
+        let hit = try XCTUnwrap(LinkInference.infer(from: "https://github.com/torvalds/Linux"))
+        XCTAssertEqual(hit.name, "Linux")
+        XCTAssertEqual(hit.keyword, "linux")
+    }
+
+    func testNonRepoGitHubPathsAreDeclined() {
+        XCTAssertNil(LinkInference.infer(from: "https://github.com/topics/swift"))
+        XCTAssertNil(LinkInference.infer(from: "https://github.com/orgs/apple/repositories"))
+        XCTAssertNil(LinkInference.infer(from: "https://github.com/torvalds"))
+        XCTAssertNil(LinkInference.infer(from: "https://github.com/search?q=x"))
+    }
+
+    func testUnknownHostsAndNonURLsAreDeclined() {
+        XCTAssertNil(LinkInference.infer(from: "https://gitlab.com/group/project"))
+        XCTAssertNil(LinkInference.infer(from: "not a url at all"))
+        XCTAssertNil(LinkInference.infer(from: "file:///etc/hosts"))
+    }
+
+    func testInferredTemplateBuildsAValidSearchURL() throws {
+        let hit = try XCTUnwrap(LinkInference.infer(from: "https://github.com/Zamua/sitesearch"))
+        let url = try SiteURL.build(template: hit.template, query: "favicon cache")
+        XCTAssertEqual(url.host, "github.com")
+        XCTAssertTrue(url.absoluteString.contains("repo%3AZamua%2Fsitesearch"))
+    }
+}

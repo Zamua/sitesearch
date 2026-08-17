@@ -7,6 +7,18 @@ struct SiteSearchApp: App {
         // launch without touching other apps' assignments. Independent of the
         // site list, so adding a site needs no sync.
         QuickKeySync.sync()
+        // Backfill missing favicons at the app level, not just when the config
+        // window appears: a fresh install seeds its defaults without icons,
+        // and a launch that quits quickly can kill the window's fetch task
+        // mid-flight. Every launch retries whatever is still missing.
+        let missing = SiteStore.load().filter { Favicon.cachedData(for: $0.id) == nil }
+        if !missing.isEmpty {
+            Task.detached(priority: .utility) {
+                for site in missing {
+                    _ = Favicon.ensureCached(for: site, fetch: Favicon.download)
+                }
+            }
+        }
     }
 
     var body: some Scene {
