@@ -59,8 +59,9 @@ Config changes and agent access:
   else), caching bytes at `icons/<site-uuid>` so `sites.json` stays clean
   JSON. Tries `/favicon.ico`, then parses the page's `<link rel="...icon...">`
   tags with a regex - one attribute out of <head> does not justify an HTML
-  parser. Fetching happens on add and on template change ONLY, never on
-  rename and never at draw time: `displayRepresentation` is synchronous, so a
+  parser. Fetching happens on add, on template change, and as a launch-time
+  backfill of missing icons (`SiteSearchApp.init`); never on rename and never
+  at draw time: `displayRepresentation` is synchronous, so a
   network call there would stall the Spotlight dropdown. The fetcher is
   injected so tests run offline. Verified live: Google/GitHub return `.ico`,
   hn.algolia.com falls through to a declared PNG, and NSImage decodes both.
@@ -100,7 +101,7 @@ Sharing:
 UI:
 
 - `Sources/ConfigView.swift` + `SiteSearchApp.swift` - plain SwiftUI window
-  with an editable Table; debounced saves (was one disk write per keystroke).
+  with an editable Table; debounced saves.
   A single `Window` scene, not `WindowGroup`: parallel config windows each held
   their own `@State` copy and clobbered each other's saves. App `init()` runs
   `QuickKeySync.sync()`.
@@ -164,7 +165,7 @@ stale one if a build ever complains about ambiguity.
 
 - `make build` - xcodegen (via nix) + xcodebuild Release into `.build/`.
   The .xcodeproj is generated; project.yml is the source of truth.
-- `make test` - 99 unit tests (URL building, defaults integrity, quick-key
+- `make test` - unit tests (URL building, defaults integrity, quick-key
   merge + legacy pruning, slot-config migration, entity filtering, search /
   bookmark split, site operations, locked mutation, MCP protocol + tools,
   share/import round-trip).
@@ -210,10 +211,10 @@ deliberately trading one-line search (`repo foo`) for:
   quick-key writes only ever happened inside the GUI save path, so agent-added
   sites silently never got the one-line treatment.
 
-The MCP server (0.9.0) is the payoff: "add a site" is now just an append to
-`sites.json`. Still to come: favicons in the dropdown via
-`DisplayRepresentation(image:)` - which has `init(data:)` and `init(url:)`,
-verified in the 26.5 SDK - and a redesign of `.sitesearch` sharing. Storage
+The MCP server is the payoff: "add a site" is just an append to
+`sites.json`. Favicons show in the dropdown via
+`DisplayRepresentation(image:)` (`SiteEntity.swift`). Still to come: a
+redesign of `.sitesearch` sharing. Storage
 stays plain JSON: it is diffable, git-able, hand-editable, and the thing
 feature #3 wants to share. See Concurrency.
 
