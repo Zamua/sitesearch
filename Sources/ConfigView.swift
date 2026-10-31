@@ -14,6 +14,7 @@ struct ConfigView: View {
     @State private var selection: Site.ID?
     @State private var saveTask: Task<Void, Never>?
     @State private var syncMessage: String?
+    @State private var saveError: String?
     @State private var showingExport = false
     @State private var importEntries: [SiteExchange.Entry]?
     /// Modification stamp of the last write we know about, so our own saves
@@ -89,9 +90,15 @@ struct ConfigView: View {
 
                 Spacer()
 
-                Text(syncMessage ?? "In Spotlight (Cmd-Space): ss, then a keyword, Tab, your query")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                if let saveError {
+                    Label(saveError, systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                } else {
+                    Text(syncMessage ?? "In Spotlight (Cmd-Space): ss, then a keyword, Tab, your query")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(12)
         }
@@ -175,14 +182,21 @@ struct ConfigView: View {
     private func save() {
         let edited = sites
         let base = baseline
-        let written = (try? SiteStore.mutate { disk in
-            let result = SiteReconcile.apply(edited: edited, baseline: base, disk: disk)
-            return (result, result)
-        }) ?? edited
-        sites = written
-        baseline = written
-        seenStamp = Self.stamp(of: SiteStore.fileURL)
-        refreshIcons(previous: base, current: written)
+        do {
+            let written = try SiteStore.mutate { disk in
+                let result = SiteReconcile.apply(edited: edited, baseline: base, disk: disk)
+                return (result, result)
+            }
+            sites = written
+            baseline = written
+            saveError = nil
+            seenStamp = Self.stamp(of: SiteStore.fileURL)
+            refreshIcons(previous: base, current: written)
+        } catch {
+            // The baseline stays put, so the edit is still pending and the
+            // next save retries it.
+            saveError = error.localizedDescription
+        }
     }
 
     /// Fetches any missing favicons off the main thread. Never blocks the UI,

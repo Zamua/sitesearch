@@ -1,7 +1,7 @@
 # SiteSearch
 
 Custom website search for Spotlight. `⌘Space`, `ss`, pick a site, `Tab`, your
-query — your browser opens that site's results. Requires macOS 26 (Tahoe).
+query, and your browser opens that site's results. Requires macOS 26 (Tahoe).
 
 ```sh
 brew install --cask zamua/tap/sitesearch
@@ -14,7 +14,8 @@ to /Applications. Launch once, then it's ready.
 
 Add them in the app window, by importing a `.sitesearch` file, or by editing
 `~/Library/Application Support/SiteSearch/sites.json`. Any of the three is
-live immediately — no relaunch.
+live immediately, no relaunch. The file is an array of entries like this; an
+`id` is added for you:
 
 ```json
 { "name": "GitHub", "keyword": "gh",
@@ -46,7 +47,7 @@ make install
 ## If `ss` does nothing
 
 Assign it by hand once: `⌘Space`, `⌘3` (Actions), find "Search Site" →
-"Add quick keys" → `ss`. Another app may already own the abbreviation —
+"Add quick keys" → `ss`. Another app may already own the abbreviation;
 SiteSearch never takes one that's claimed.
 
 MIT

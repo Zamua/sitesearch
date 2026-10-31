@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// A configured website search: a display name, a short keyword alias, and a
@@ -14,10 +15,6 @@ struct Site: Codable, Identifiable, Hashable {
         self.name = name
         self.template = template
     }
-
-    // Explicit keys so a config written by 0.4.0-0.7.0 (which carried a
-    // per-site `slot`) still decodes; the dead field is dropped on rewrite.
-    private enum CodingKeys: String, CodingKey { case id, keyword, name, template }
 
     /// A bookmark has nothing to substitute - it just opens.
     var isBookmark: Bool { !SiteURL.requiresQuery(template) }
@@ -64,7 +61,7 @@ enum SiteStore {
     static func mutate<T>(at url: URL = fileURL, _ body: ([Site]) throws -> ([Site], T)) throws -> T {
         try withLock(at: url) {
             let (updated, result) = try body(load(from: url))
-            save(updated, to: url)
+            try save(updated, to: url)
             return result
         }
     }
@@ -84,34 +81,75 @@ enum SiteStore {
     static func load(from url: URL = fileURL) -> [Site] {
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path) else {
-            save(defaults, to: url)
+            // Seeding is best-effort: the defaults are returned either way, and
+            // the next mutate reports a failed write to a caller that can act.
+            try? save(defaults, to: url)
             return defaults
         }
         guard let data = try? Data(contentsOf: url),
-              let sites = try? JSONDecoder().decode([Site].self, from: data) else {
+              let sites = try? JSONDecoder().decode([Site].self, from: withIDs(data)) else {
             // An existing but unreadable file must never be silently replaced:
             // the UI would save defaults over the user's config. Park it for
             // recovery, then start over.
             let backup = url.appendingPathExtension("corrupt")
             try? fm.removeItem(at: backup)
             try? fm.moveItem(at: url, to: backup)
-            save(defaults, to: url)
+            try? save(defaults, to: url)
             return defaults
         }
         return sites
     }
 
-    /// Returns the array actually persisted so callers can keep their
-    /// in-memory copy in step with disk.
-    @discardableResult
-    static func save(_ sites: [Site], to url: URL = fileURL) -> [Site] {
-        let dir = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    static func save(_ sites: [Site], to url: URL = fileURL) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(sites) {
-            try? data.write(to: url, options: .atomic)
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try encoder.encode(sites).write(to: url, options: .atomic)
+        } catch {
+            throw SiteStoreError.writeFailed(path: url.path, reason: error.localizedDescription)
         }
-        return sites
+    }
+
+    /// A hand-written entry may omit `id`. Each gets one derived from its
+    /// content before decoding, so every process resolves it to the same
+    /// entity (Spotlight caches entity ids) and `Site`'s own Codable stays the
+    /// only description of the format. The occurrence count keeps identical
+    /// entries apart; the next save persists the ids. Anything that is not an
+    /// array of objects passes through for the decoder to reject.
+    private static func withIDs(_ data: Data) throws -> Data {
+        guard var entries = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              entries.contains(where: { $0["id"] == nil }) else { return data }
+        var seen: [String: Int] = [:]
+        for index in entries.indices where entries[index]["id"] == nil {
+            let key = ["keyword", "name", "template"]
+                .map { entries[index][$0] as? String ?? "" }
+                .joined(separator: "\u{0}")
+            let occurrence = seen[key, default: 0]
+            seen[key] = occurrence + 1
+            entries[index]["id"] = derivedID(key + "\u{0}\(occurrence)").uuidString
+        }
+        return try JSONSerialization.data(withJSONObject: entries)
+    }
+
+    /// A name-based (version 5) UUID in a fixed namespace.
+    private static func derivedID(_ name: String) -> UUID {
+        let namespace = UUID(uuidString: "6F1C5A52-9B2E-4D7A-8C3B-5E0D2A9F4B18")!
+        let input = withUnsafeBytes(of: namespace.uuid) { Data($0) } + Data(name.utf8)
+        var bytes = Array(Insecure.SHA1.hash(data: input).prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x50
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return bytes.withUnsafeBytes { UUID(uuid: $0.loadUnaligned(as: uuid_t.self)) }
+    }
+}
+
+enum SiteStoreError: Error, LocalizedError, Equatable {
+    case writeFailed(path: String, reason: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .writeFailed(let path, let reason):
+            return "Could not save sites to \(path): \(reason)"
+        }
     }
 }
