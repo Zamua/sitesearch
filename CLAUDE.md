@@ -14,9 +14,13 @@ Model / storage:
   Stateless on purpose: the intent may run in a background-launched app
   instance, so reading fresh from disk avoids stale-config bugs. Defaults
   carry hardcoded UUIDs (Spotlight caches entity ids - fresh-per-launch ids
-  broke recents and pre-filled parameters). Explicit `CodingKeys` so a config
-  written by 0.4.0-0.7.0 (carrying a per-site `slot`) still decodes and drops
-  the dead field on rewrite.
+  broke recents and pre-filled parameters). The file is hand-editable, so
+  `id` is optional on disk: `load` fills a missing one into the raw document
+  before decoding, derived from the entry's content (name-based UUID), so
+  every process agrees on it and `Site`'s Codable stays the one description
+  of the format. Unknown keys such as the old per-site `slot` are ignored.
+  `save` throws; `mutate` propagates, so the MCP tools and the window report a
+  write that did not land.
 - `Sources/SiteEntity.swift` - `SiteEntity: AppEntity` + `SiteEntityQuery`
   (`EnumerableEntityQuery` for the full dropdown, `EntityStringQuery` so the
   keyword alias matches during type-to-filter). Entity `id` is the Site's

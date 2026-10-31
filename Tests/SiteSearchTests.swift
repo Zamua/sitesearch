@@ -114,23 +114,34 @@ final class QuickKeySyncTests: XCTestCase {
 /// Configs written by 0.4.0-0.7.0 carry a per-site `slot`. Reading one must
 /// keep working, and rewriting it must drop the dead field.
 final class SiteMigrationTests: XCTestCase {
+    private var tmp: URL!
+    private var file: URL { tmp.appendingPathComponent("sites.json") }
     private let legacyJSON = """
     [{"id":"9D2C63A0-5B21-4A2E-9C5A-000000000099","keyword":"hn","name":"Hacker News","template":"https://hn.algolia.com/?q={query}","slot":3}]
     """
 
-    func testLegacyConfigWithSlotFieldStillDecodes() throws {
-        let sites = try JSONDecoder().decode([Site].self, from: Data(legacyJSON.utf8))
-        XCTAssertEqual(sites.count, 1)
-        XCTAssertEqual(sites.first?.keyword, "hn")
+    override func setUpWithError() throws {
+        tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sitesearch-migration-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        try Data(legacyJSON.utf8).write(to: file)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tmp)
+    }
+
+    func testLegacyConfigWithSlotFieldStillLoads() {
+        let sites = SiteStore.load(from: file)
+        XCTAssertEqual(sites.map(\.keyword), ["hn"])
         XCTAssertEqual(sites.first?.template, "https://hn.algolia.com/?q={query}")
     }
 
     func testResavingLegacyConfigDropsTheSlotField() throws {
-        let sites = try JSONDecoder().decode([Site].self, from: Data(legacyJSON.utf8))
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let round = String(decoding: try encoder.encode(sites), as: UTF8.self)
-        XCTAssertFalse(round.contains("slot"), "slot should no longer be persisted")
+        _ = try SiteStore.mutate(at: file) { ($0, ()) }
+        let raw = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertTrue(raw.contains("hn.algolia.com"))
+        XCTAssertFalse(raw.contains("slot"), "slot should no longer be persisted")
     }
 }
 
@@ -339,7 +350,7 @@ final class SiteStoreMutationTests: XCTestCase {
     }
 
     func testMutateAppliesAndPersists() throws {
-        SiteStore.save(SiteStore.defaults, to: file)
+        try SiteStore.save(SiteStore.defaults, to: file)
         let added = try SiteStore.mutate(at: file) {
             try SiteOps.add(to: $0, name: "Hacker News", keyword: "hn", template: "https://hn.algolia.com/?q={query}")
         }
@@ -353,7 +364,7 @@ final class SiteStoreMutationTests: XCTestCase {
     /// holding a stale snapshot must not be able to erase a concurrent write,
     /// because mutate re-reads under the lock rather than trusting the caller.
     func testMutateRereadsSoAConcurrentAdditionSurvives() throws {
-        SiteStore.save(SiteStore.defaults, to: file)
+        try SiteStore.save(SiteStore.defaults, to: file)
         let stale = SiteStore.load(from: file)
 
         _ = try SiteStore.mutate(at: file) {
@@ -370,7 +381,7 @@ final class SiteStoreMutationTests: XCTestCase {
     }
 
     func testFailedMutationLeavesTheFileUntouched() throws {
-        SiteStore.save(SiteStore.defaults, to: file)
+        try SiteStore.save(SiteStore.defaults, to: file)
         XCTAssertThrowsError(try SiteStore.mutate(at: file) {
             try SiteOps.add(to: $0, name: "Bad", keyword: "bad", template: "not a url")
         })
@@ -378,9 +389,75 @@ final class SiteStoreMutationTests: XCTestCase {
     }
 
     func testLockIsReentrantEnoughForNestedReads() throws {
-        SiteStore.save(SiteStore.defaults, to: file)
+        try SiteStore.save(SiteStore.defaults, to: file)
         let count = SiteStore.withLock(at: file) { SiteStore.load(from: file).count }
         XCTAssertEqual(count, SiteStore.defaults.count)
+    }
+}
+
+/// sites.json is hand-editable, so `id` is optional on disk. An entry written
+/// without one must load, not reset the whole config to defaults.
+final class StoredSiteTests: XCTestCase {
+    private var tmp: URL!
+    private var file: URL { tmp.appendingPathComponent("sites.json") }
+
+    override func setUpWithError() throws {
+        tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sitesearch-stored-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tmp.path)
+        try? FileManager.default.removeItem(at: tmp)
+    }
+
+    private func write(_ json: String) throws {
+        try Data(json.utf8).write(to: file)
+    }
+
+    func testEntryWithoutAnIDLoadsInsteadOfResettingTheConfig() throws {
+        try write(#"[{"name": "Hacker News", "keyword": "hn", "template": "https://hn.algolia.com/?q={query}"}]"#)
+        let sites = SiteStore.load(from: file)
+        XCTAssertEqual(sites.map(\.keyword), ["hn"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.appendingPathExtension("corrupt").path))
+    }
+
+    /// Spotlight caches entity ids, so a missing id must resolve the same way
+    /// in every process, not mint a fresh one per load.
+    func testMissingIDIsStableAcrossLoads() throws {
+        try write(#"[{"name": "Hacker News", "keyword": "hn", "template": "https://hn.algolia.com/?q={query}"}]"#)
+        XCTAssertEqual(SiteStore.load(from: file).first?.id, SiteStore.load(from: file).first?.id)
+    }
+
+    func testIdenticalEntriesWithoutIDsGetDistinctIDs() throws {
+        let entry = #"{"name": "Docs", "keyword": "d", "template": "https://example.com/?q={query}"}"#
+        try write("[\(entry), \(entry)]")
+        XCTAssertEqual(Set(SiteStore.load(from: file).map(\.id)).count, 2)
+    }
+
+    func testExplicitIDIsKept() throws {
+        let id = UUID()
+        try write(#"[{"id": "\#(id.uuidString)", "name": "N", "keyword": "k", "template": "https://example.com/?q={query}"}]"#)
+        XCTAssertEqual(SiteStore.load(from: file).first?.id, id)
+    }
+
+    /// The next write persists the id, so a later hand edit cannot move it.
+    func testAMutationPersistsTheResolvedID() throws {
+        try write(#"[{"name": "Hacker News", "keyword": "hn", "template": "https://hn.algolia.com/?q={query}"}]"#)
+        let before = try XCTUnwrap(SiteStore.load(from: file).first?.id)
+        _ = try SiteStore.mutate(at: file) { ($0, ()) }
+        let raw = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertTrue(raw.contains(before.uuidString))
+    }
+
+    func testAFailedWriteIsReportedAndLeavesTheFileUntouched() throws {
+        try SiteStore.save(SiteStore.defaults, to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: tmp.path)
+        XCTAssertThrowsError(try SiteStore.mutate(at: file) {
+            try SiteOps.add(to: $0, name: "Hacker News", keyword: "hn", template: "https://hn.algolia.com/?q={query}")
+        })
+        XCTAssertNil(SiteOps.find(SiteStore.load(from: file), "hn"))
     }
 }
 
@@ -757,7 +834,7 @@ final class MCPHandlerTests: XCTestCase {
         tmp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("sitesearch-mcp-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        SiteStore.save(SiteStore.defaults, to: file)
+        try SiteStore.save(SiteStore.defaults, to: file)
         let recorder = OpenRecorder()
         let network = FakeNetwork()
         self.recorder = recorder
@@ -987,6 +1064,13 @@ final class MCPHandlerTests: XCTestCase {
         let (_, isError) = try callTool("update_site", ["site": "s1", "name": "Renamed"])
         XCTAssertFalse(isError)
         XCTAssertEqual(network.requested.count, before, "a rename should not hit the network")
+    }
+
+    func testAWriteFailureIsAnErrorNotASuccess() throws {
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: tmp.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tmp.path) }
+        let result = try callTool("add_site", ["name": "Hacker News", "keyword": "hn", "template": "https://hn.algolia.com/?q={query}"])
+        XCTAssertTrue(result.isError, "reported success for a write that never landed: \(result.text)")
     }
 }
 
