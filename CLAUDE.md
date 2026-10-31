@@ -72,8 +72,14 @@ Config changes and agent access:
 - `Sources/MCPHandler.swift` - the MCP server as a pure function of (request,
   config URL), with an injectable `opener` so `search_site` is testable without
   launching a browser. Shared by both targets so the unit tests can reach it.
-  Tool failures come back as results with `isError`, not JSON-RPC errors: the
-  call worked, the operation did not, and the agent needs to read why.
+  `Tool` is the one tool table (exhaustive switches, so a listed tool cannot
+  lack a schema or an implementation); `ToolCall` parses arguments once at the
+  edge, and a present argument of the wrong type is an error, not an omitted
+  field. Tool failures come back as results with `isError`, not JSON-RPC
+  errors: the call worked, the operation did not, and the agent needs to read
+  why. `serverInfo.version` is the bundle's `CFBundleShortVersionString`; the
+  tool target links an Info.plist into its binary so it knows the version
+  standalone too, and `MARKETING_VERSION` is project-wide in project.yml.
 - `Sources/MCPMain/main.swift` - the stdio loop. EXCLUDED from the app target
   in project.yml (top-level code cannot coexist with the app's `@main`); built
   as the `sitesearch-mcp` tool target and copied into

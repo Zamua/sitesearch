@@ -1072,6 +1072,44 @@ final class MCPHandlerTests: XCTestCase {
         let result = try callTool("add_site", ["name": "Hacker News", "keyword": "hn", "template": "https://hn.algolia.com/?q={query}"])
         XCTAssertTrue(result.isError, "reported success for a write that never landed: \(result.text)")
     }
+
+    func testInitializeReportsTheShippedVersion() throws {
+        let response = try XCTUnwrap(handler.handle(request("initialize", ["protocolVersion": "2025-06-18"])))
+        let info = try XCTUnwrap((response["result"] as? [String: Any])?["serverInfo"] as? [String: Any])
+        let shipped = try XCTUnwrap(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
+        XCTAssertEqual(info["version"] as? String, shipped)
+    }
+
+    func testAFailedOpenReadsAsASentence() throws {
+        let failing = MCPHandler(storeURL: file, opener: { _ in false }, iconFetch: { _ in nil })
+        let response = try XCTUnwrap(failing.handle(request("tools/call", ["name": "search_site", "arguments": ["site": "google", "query": "x"]])))
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        let text = try XCTUnwrap((result["content"] as? [[String: Any]])?.first?["text"] as? String)
+        XCTAssertEqual(result["isError"] as? Bool, true)
+        XCTAssertTrue(text.contains("could not open"), text)
+        XCTAssertFalse(text.contains("openFailed("), text)
+    }
+
+    func testAWrongTypedArgumentIsRejectedNotIgnored() throws {
+        let result = try callTool("update_site", ["site": "google", "name": 42])
+        XCTAssertTrue(result.isError, result.text)
+        XCTAssertEqual(SiteOps.find(SiteStore.load(from: file), "google")?.name, "Google")
+    }
+
+    func testUpdateSiteCanTurnASearchIntoABookmark() throws {
+        let result = try callTool("update_site", ["site": "google", "template": "https://www.google.com/"])
+        XCTAssertFalse(result.isError, result.text)
+        XCTAssertEqual(SiteOps.find(SiteStore.load(from: file), "google")?.isBookmark, true)
+    }
+
+    func testEveryListedToolIsDispatched() throws {
+        let response = try XCTUnwrap(handler.handle(request("tools/list")))
+        let tools = try XCTUnwrap((response["result"] as? [String: Any])?["tools"] as? [[String: Any]])
+        for name in tools.compactMap({ $0["name"] as? String }) {
+            let reply = try XCTUnwrap(handler.handle(request("tools/call", ["name": name, "arguments": [:] as [String: Any]])))
+            XCTAssertNil(reply["error"], "\(name) is listed but not dispatched")
+        }
+    }
 }
 
 /// The whole point of dropping slots: a site added behind the app's back (an

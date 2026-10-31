@@ -2,7 +2,6 @@ import Foundation
 
 /// URL construction and template validation, with no framework dependencies
 /// beyond Foundation so both the app and the MCP server can share it.
-/// `SearchSiteIntent` adds the AppIntents-facing error conformance on top.
 enum SiteURL {
     /// RFC 3986 unreserved characters, ASCII only. Deliberately narrower than
     /// .urlQueryAllowed (which passes '&', '=', '+' through raw) and than
@@ -47,8 +46,19 @@ enum SiteURL {
     }
 }
 
-enum SearchSiteError: Error {
+enum SearchSiteError: Error, LocalizedError {
     case invalidURL(String)
     case missingPlaceholder(String)
     case openFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL(let s):
+            return "The site's URL template produced an invalid URL: \(s)"
+        case .missingPlaceholder(let t):
+            return "The site's URL template is missing the {query} placeholder: \(t)"
+        case .openFailed(let s):
+            return "The browser could not open: \(s)"
+        }
+    }
 }
