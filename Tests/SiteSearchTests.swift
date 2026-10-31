@@ -148,7 +148,7 @@ final class SiteMigrationTests: XCTestCase {
 final class SiteExchangeTests: XCTestCase {
     func testExportParseRoundtrip() throws {
         let data = try SiteExchange.export(SiteStore.defaults)
-        let entries = try SiteExchange.parse(data)
+        let entries = try SiteExchange.parse(data).entries
         XCTAssertEqual(entries.map(\.name), SiteStore.defaults.map(\.name))
         XCTAssertEqual(entries.map(\.template), SiteStore.defaults.map(\.template))
     }
@@ -177,6 +177,20 @@ final class SiteExchangeTests: XCTestCase {
         let (result, _) = SiteExchange.merge(entries, into: SiteStore.defaults)
         let newSite = result.last!
         XCTAssertFalse(SiteStore.defaults.map(\.id).contains(newSite.id))
+    }
+
+    func testInvalidEntriesAreRejectedWithAReason() throws {
+        let data = Data(#"""
+        {"version": 1, "sites": [
+          {"name": "Good", "keyword": "good", "template": "https://good.example/?q={query}"},
+          {"name": "No URL", "keyword": "bad", "template": "javascript:alert(1)"},
+          {"name": "No keyword", "keyword": "", "template": "https://k.example/?q={query}"}
+        ]}
+        """#.utf8)
+        let parsed = try SiteExchange.parse(data)
+        XCTAssertEqual(parsed.entries.map(\.name), ["Good"])
+        XCTAssertEqual(parsed.rejected.map(\.entry.name), ["No URL", "No keyword"])
+        XCTAssertFalse(parsed.rejected.contains { $0.reason.isEmpty })
     }
 }
 
@@ -551,68 +565,96 @@ final class BookmarkTests: XCTestCase {
 
 /// Guards the settings a public release depends on. These drift silently and
 /// only bite at notarization or install time, which is far too late.
+/// What notarization and Homebrew depend on, checked where it takes effect:
+/// the built bundle, and the generated Xcode project that xcodebuild reads
+/// (parsed, so a setting on the wrong target or config fails, while moving a
+/// setting between project and target level does not).
 final class ReleaseConfigTests: XCTestCase {
-    private var root: URL {
-        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    /// The generated project.pbxproj, an OpenStep plist.
+    private struct Project {
+        let objects: [String: [String: Any]]
+
+        init() throws {
+            let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("SiteSearch.xcodeproj/project.pbxproj")
+            let root = try PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil)
+            objects = try XCTUnwrap((root as? [String: Any])?["objects"] as? [String: [String: Any]])
+        }
+
+        private func release(_ owner: [String: Any]) -> [String: Any] {
+            let list = objects[owner["buildConfigurationList"] as? String ?? ""]
+            let ids = list?["buildConfigurations"] as? [String] ?? []
+            let config = ids.compactMap { objects[$0] }.first { $0["name"] as? String == "Release" }
+            return config?["buildSettings"] as? [String: Any] ?? [:]
+        }
+
+        func target(_ name: String) -> [String: Any]? {
+            objects.values.first { $0["isa"] as? String == "PBXNativeTarget" && $0["name"] as? String == name }
+        }
+
+        /// A Release build setting for `target`, falling back to the project level.
+        func releaseSetting(_ key: String, target name: String) -> String? {
+            let project = objects.values.first { $0["isa"] as? String == "PBXProject" } ?? [:]
+            let own = target(name).map(release) ?? [:]
+            return (own[key] ?? release(project)[key]) as? String
+        }
+
+        /// Paths `target` copies into Contents/MacOS (copy-phase subfolder 6).
+        func executablesCopied(by name: String) -> [String] {
+            let phases = target(name)?["buildPhases"] as? [String] ?? []
+            return phases.compactMap { objects[$0] }
+                .filter { $0["isa"] as? String == "PBXCopyFilesBuildPhase" && "\($0["dstSubfolderSpec"] ?? "")" == "6" }
+                .flatMap { ($0["files"] as? [String] ?? []) }
+                .compactMap { objects[$0]?["fileRef"] as? String }
+                .compactMap { objects[$0]?["path"] as? String }
+        }
     }
 
-    private func read(_ path: String) throws -> String {
-        try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+    private let executables = ["SiteSearch", "sitesearch-mcp"]
+
+    /// The bundle once reported 1.0 for every release because a plist
+    /// hardcoded it; Homebrew and bug reports both read this.
+    func testTheBuiltBundleReportsTheProjectVersions() throws {
+        let project = try Project()
+        let info = try XCTUnwrap(Bundle.main.infoDictionary)
+        XCTAssertEqual(info["CFBundleShortVersionString"] as? String,
+                       project.releaseSetting("MARKETING_VERSION", target: "SiteSearch"))
+        XCTAssertEqual(info["CFBundleVersion"] as? String,
+                       project.releaseSetting("CURRENT_PROJECT_VERSION", target: "SiteSearch"))
     }
 
-    /// The bundle reported 1.0 for every release from 0.7.0 on, because the
-    /// custom Info.plist hardcoded it. Homebrew and bug reports both read this.
-    func testInfoPlistTracksTheBuildSettingVersions() throws {
-        let plist = try read("Sources/Info.plist")
-        XCTAssertTrue(plist.contains("$(MARKETING_VERSION)"),
-                      "CFBundleShortVersionString must follow MARKETING_VERSION, not a literal")
-        XCTAssertTrue(plist.contains("$(CURRENT_PROJECT_VERSION)"),
-                      "CFBundleVersion must follow CURRENT_PROJECT_VERSION, not a literal")
+    /// Homebrew's `depends_on macos:` and the installer read this, and the app
+    /// cannot run below 26.
+    func testTheBuiltBundleRequiresTahoe() {
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "LSMinimumSystemVersion") as? String, "26.0")
     }
 
-    /// Homebrew's `depends_on macos:` and the installer both read this, and the
-    /// app genuinely cannot run below 26.
-    func testInfoPlistDeclaresTheMinimumSystemVersion() throws {
-        let plist = try read("Sources/Info.plist")
-        XCTAssertTrue(plist.contains("LSMinimumSystemVersion"), "missing LSMinimumSystemVersion")
-        XCTAssertTrue(plist.contains("26.0"), "minimum system version should be macOS 26")
-    }
-
-    /// Notarization rejects anything without the hardened runtime.
-    func testHardenedRuntimeIsEnabled() throws {
-        let project = try read("project.yml")
-        XCTAssertFalse(project.contains("ENABLE_HARDENED_RUNTIME: NO"),
-                       "notarization requires the hardened runtime")
-        XCTAssertTrue(project.contains("ENABLE_HARDENED_RUNTIME: YES"))
-    }
-
-    /// The embedded MCP binary is a second executable inside the bundle; if it
-    /// is not signed on copy, notarization fails on the nested code.
-    func testEmbeddedToolIsCodeSignedOnCopy() throws {
-        let project = try read("project.yml")
-        XCTAssertTrue(project.contains("codeSign: true"),
-                      "the copied sitesearch-mcp must be signed, or notarization rejects the bundle")
-    }
-
-    /// Signing the nested binary is not enough - it needs the hardened runtime
-    /// in its own right. The app target having it does not cover the tool.
-    func testEmbeddedToolAlsoEnablesTheHardenedRuntime() throws {
-        let project = try read("project.yml")
-        let enabled = project.components(separatedBy: "ENABLE_HARDENED_RUNTIME: YES").count - 1
-        XCTAssertGreaterThanOrEqual(enabled, 2,
-                                    "both the app and the sitesearch-mcp target need the hardened runtime")
+    /// Notarization checks every executable in the bundle for the hardened runtime.
+    func testReleaseHardensEveryExecutable() throws {
+        let project = try Project()
+        for name in executables {
+            XCTAssertEqual(project.releaseSetting("ENABLE_HARDENED_RUNTIME", target: name), "YES", name)
+        }
     }
 
     /// Xcode injects com.apple.security.get-task-allow unless told not to, and
-    /// the notary service rejects every binary carrying it ("The executable
-    /// requests the com.apple.security.get-task-allow entitlement"). Both
-    /// executables in the bundle are checked, so both targets must opt out for
-    /// Release. Debug keeps it - that is what lets a debugger attach.
-    func testReleaseDoesNotInjectTheDebuggerEntitlement() throws {
-        let project = try read("project.yml")
-        let optedOut = project.components(separatedBy: "CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO").count - 1
-        XCTAssertGreaterThanOrEqual(optedOut, 2,
-                                    "the app and sitesearch-mcp targets must both opt out of the injected debugger entitlement for Release")
+    /// the notary rejects any executable carrying it. Debug keeps it so a
+    /// debugger can attach.
+    func testReleaseOmitsTheDebuggerEntitlementEverywhere() throws {
+        let project = try Project()
+        for name in executables {
+            XCTAssertEqual(project.releaseSetting("CODE_SIGN_INJECT_BASE_ENTITLEMENTS", target: name), "NO", name)
+        }
+    }
+
+    /// The MCP server ships inside the app, signed: the path the README and
+    /// `claude mcp add` point at.
+    func testTheAppShipsTheSignedMCPToolInContentsMacOS() throws {
+        XCTAssertEqual(try Project().executablesCopied(by: "SiteSearch"), ["sitesearch-mcp"])
+        let tool = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/sitesearch-mcp")
+        var code: SecStaticCode?
+        XCTAssertEqual(SecStaticCodeCreateWithPath(tool as CFURL, [], &code), errSecSuccess)
+        XCTAssertEqual(SecStaticCodeCheckValidity(try XCTUnwrap(code), [], nil), errSecSuccess, "embedded tool is not validly signed")
     }
 }
 
@@ -859,6 +901,69 @@ final class SiteReconcileTests: XCTestCase {
             let merged = SiteReconcile.apply(edited: [edited], baseline: [base], disk: [base])
             XCTAssertEqual(merged.first?[keyPath: field], edited[keyPath: field])
         }
+    }
+
+    // MARK: what a save persists, and what the window shows after reading disk
+
+    private let g = Site(id: UUID(), keyword: "g", name: "Google", template: "https://www.google.com/search?q={query}")
+    private let h = Site(id: UUID(), keyword: "h", name: "HN", template: "https://hn.algolia.com/?q={query}")
+
+    func testAValidEditPersists() {
+        var edited = g
+        edited.name = "Search"
+        XCTAssertEqual(SiteReconcile.persistable(edited: [edited, h], baseline: [g, h], disk: [g, h]).first?.name, "Search")
+    }
+
+    func testAnEditThatBreaksARowIsHeldBack() {
+        var emptied = g
+        emptied.keyword = ""
+        XCTAssertEqual(SiteReconcile.persistable(edited: [emptied, h], baseline: [g, h], disk: [g, h]).first?.keyword, "g")
+
+        var taken = g
+        taken.keyword = "H"
+        XCTAssertEqual(SiteReconcile.persistable(edited: [taken, h], baseline: [g, h], disk: [g, h]).first?.keyword, "g")
+
+        var broken = g
+        broken.template = "not a url"
+        XCTAssertEqual(SiteReconcile.persistable(edited: [broken, h], baseline: [g, h], disk: [g, h]).first?.template, g.template)
+    }
+
+    func testANewRowPersistsOnlyOnceValid() {
+        let draft = Site(keyword: "", name: "New Site", template: "https://example.com/search?q={query}")
+        XCTAssertEqual(SiteReconcile.persistable(edited: [g, draft], baseline: [g], disk: [g]).count, 1)
+        var ready = draft
+        ready.keyword = "ex"
+        XCTAssertEqual(SiteReconcile.persistable(edited: [g, ready], baseline: [g], disk: [g]).count, 2)
+    }
+
+    /// Validation guards the window's edits, never erases what is on disk.
+    func testAnUntouchedInvalidRowOnDiskIsKept() {
+        let handEdited = Site(keyword: "", name: "Hand", template: "nope")
+        let result = SiteReconcile.persistable(edited: [g, handEdited], baseline: [g, handEdited], disk: [g, handEdited])
+        XCTAssertEqual(result.count, 2)
+    }
+
+    /// An external change read during the save debounce must not swallow the
+    /// edit still waiting to be saved.
+    func testAnExternalChangeDoesNotSwallowAPendingEdit() {
+        var edited = g
+        edited.name = "Search"
+        let external = [g, h]  // someone else added h
+        let (shown, baseline) = SiteReconcile.absorb(disk: external, edited: [edited], baseline: [g])
+        XCTAssertEqual(shown.map(\.name), ["Search", "HN"])
+        let saved = SiteReconcile.persistable(edited: shown, baseline: baseline, disk: external)
+        XCTAssertEqual(saved.first?.name, "Search", "the pending edit was lost")
+        XCTAssertEqual(saved.count, 2)
+    }
+
+    /// A held-back edit stays on screen, so the user keeps typing into it.
+    func testAHeldBackEditStaysShownAndPending() {
+        var typing = g
+        typing.template = "https://"
+        let written = SiteReconcile.persistable(edited: [typing], baseline: [g], disk: [g])
+        let (shown, baseline) = SiteReconcile.absorb(disk: written, edited: [typing], baseline: [g])
+        XCTAssertEqual(shown.first?.template, "https://")
+        XCTAssertEqual(baseline.first?.template, g.template, "still pending, so the next save retries it")
     }
 }
 

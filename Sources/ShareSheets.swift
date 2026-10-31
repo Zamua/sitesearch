@@ -80,12 +80,15 @@ struct ExportSheet: View {
 /// toggles so the recipient can take only what they want.
 struct ImportSheet: View {
     let entries: [SiteExchange.Entry]
+    /// Entries the file carried that cannot be imported, each with why.
+    let skipped: [String]
     let onImport: ([SiteExchange.Entry]) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var selected: Set<String>
 
-    init(entries: [SiteExchange.Entry], onImport: @escaping ([SiteExchange.Entry]) -> Void) {
+    init(entries: [SiteExchange.Entry], skipped: [String], onImport: @escaping ([SiteExchange.Entry]) -> Void) {
         self.entries = entries
+        self.skipped = skipped
         self.onImport = onImport
         _selected = State(initialValue: Set(entries.map(\.id)))
     }
@@ -115,6 +118,15 @@ struct ImportSheet: View {
                 }
             }
             .frame(minHeight: 220)
+
+            if !skipped.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Skipped \(skipped.count) that cannot be imported:", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                    ForEach(skipped, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
+                }
+                .font(.callout)
+            }
 
             HStack {
                 Button("Cancel") { dismiss() }

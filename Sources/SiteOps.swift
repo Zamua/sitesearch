@@ -65,6 +65,18 @@ enum SiteOps {
         }
     }
 
+    /// What is wrong with `site` as a member of `sites`, or nil if nothing is:
+    /// the same rules the MCP tools enforce, plus a keyword no other site uses.
+    static func problem(with site: Site, among sites: [Site]) -> SiteOpError? {
+        do {
+            try validate(name: site.name, keyword: site.keyword, template: site.template)
+            try assertKeywordFree(site.keyword, in: sites, excluding: site.id)
+            return nil
+        } catch {
+            return error as? SiteOpError ?? .invalidTemplate(site.template)
+        }
+    }
+
     /// `wanted` if no site uses it (case-insensitively), else the first free
     /// `wanted2`, `wanted3`, ... An empty keyword is returned as-is.
     static func uniqueKeyword(_ wanted: String, among sites: [Site]) -> String {

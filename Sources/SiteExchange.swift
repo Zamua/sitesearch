@@ -33,10 +33,29 @@ enum SiteExchange {
         return try encoder.encode(doc)
     }
 
-    static func parse(_ data: Data) throws -> [Entry] {
+    /// A shared file's entries, split into what can be imported and what
+    /// cannot (with why), so the import sheet can say what it skipped.
+    struct Parsed {
+        var entries: [Entry]
+        var rejected: [(entry: Entry, reason: String)]
+    }
+
+    /// The file is untrusted input: each entry must pass the same rules as a
+    /// site added any other way. Keyword collisions are not a rejection; the
+    /// merge suffixes them.
+    static func parse(_ data: Data) throws -> Parsed {
         let doc = try JSONDecoder().decode(Document.self, from: data)
         guard doc.version == 1 else { throw ExchangeError.unsupportedVersion(doc.version) }
-        return doc.sites.filter { !$0.template.isEmpty && !$0.name.isEmpty }
+        var parsed = Parsed(entries: [], rejected: [])
+        for entry in doc.sites {
+            do {
+                try SiteOps.validate(name: entry.name, keyword: entry.keyword, template: entry.template)
+                parsed.entries.append(entry)
+            } catch {
+                parsed.rejected.append((entry, error.localizedDescription))
+            }
+        }
+        return parsed
     }
 
     /// Merge semantics for import: entries whose (name, template) already
