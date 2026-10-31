@@ -633,6 +633,42 @@ final class FaviconTests: XCTestCase {
         Site(keyword: "k", name: "N", template: template)
     }
 
+    // MARK: refresh
+
+    private func icon(_ site: Site) -> Data? { Favicon.cachedData(for: site.id, in: tmp) }
+
+    func testRefreshFetchesNewSitesAndDropsRemovedOnes() {
+        let kept = site("https://a.example/?q={query}")
+        let gone = site("https://b.example/?q={query}")
+        let net = FakeNetwork()
+        net.response = Data("icon".utf8)
+        Favicon.refresh(from: [], to: [kept, gone], in: tmp, fetch: net.fetch)
+        XCTAssertNotNil(icon(kept))
+        XCTAssertNotNil(icon(gone))
+
+        Favicon.refresh(from: [kept, gone], to: [kept], in: tmp, fetch: net.fetch)
+        XCTAssertNotNil(icon(kept))
+        XCTAssertNil(icon(gone), "a removed site's icon should be dropped")
+    }
+
+    func testRefreshRefetchesOnlyWhenTheOriginMoved() {
+        var s = site("https://a.example/?q={query}")
+        let net = FakeNetwork()
+        net.response = Data("old".utf8)
+        Favicon.refresh(from: [], to: [s], in: tmp, fetch: net.fetch)
+
+        var renamed = s
+        renamed.name = "Renamed"
+        net.response = Data("new".utf8)
+        Favicon.refresh(from: [s], to: [renamed], in: tmp, fetch: net.fetch)
+        XCTAssertEqual(icon(s), Data("old".utf8), "a rename must not refetch")
+
+        let before = s
+        s.template = "https://elsewhere.example/?q={query}"
+        Favicon.refresh(from: [before], to: [s], in: tmp, fetch: net.fetch)
+        XCTAssertEqual(icon(s), Data("new".utf8), "a new origin must refetch")
+    }
+
     // MARK: origin
 
     func testOriginStripsPathAndQuery() {
@@ -811,6 +847,18 @@ final class SiteReconcileTests: XCTestCase {
         let result = SiteReconcile.apply(edited: [a, b], baseline: [a, b], disk: [a])
         XCTAssertEqual(result.count, 1, "a site deleted by an agent came back")
         XCTAssertNil(result.first { $0.id == b.id })
+    }
+
+    func testTheFieldTableCoversEveryEditableSiteField() {
+        let stored = Mirror(reflecting: SiteStore.defaults[0]).children.compactMap(\.label).filter { $0 != "id" }
+        XCTAssertEqual(stored.count, SiteReconcile.fields.count, "a Site field is missing from SiteReconcile.fields")
+        let base = Site(keyword: "k", name: "n", template: "https://t.example/?q={query}")
+        for field in SiteReconcile.fields {
+            var edited = base
+            edited[keyPath: field] += "-changed"
+            let merged = SiteReconcile.apply(edited: [edited], baseline: [base], disk: [base])
+            XCTAssertEqual(merged.first?[keyPath: field], edited[keyPath: field])
+        }
     }
 }
 
@@ -1136,9 +1184,9 @@ final class RuntimeSiteVisibilityTests: XCTestCase {
 
     func testKeywordPrefixAndNameSubstringBothMatch() {
         let sites = [Site(keyword: "hn", name: "Hacker News", template: "https://hn.algolia.com/?q={query}")]
-        XCTAssertTrue(SiteEntityQuery.matches(sites, "hn"), "keyword prefix should match")
-        XCTAssertTrue(SiteEntityQuery.matches(sites, "hacker"), "name substring should match")
-        XCTAssertFalse(SiteEntityQuery.matches(sites, "zzz"))
+        XCTAssertEqual(SiteEntityQuery.filter(sites, matching: "hn").count, 1, "keyword prefix should match")
+        XCTAssertEqual(SiteEntityQuery.filter(sites, matching: "hacker").count, 1, "name substring should match")
+        XCTAssertTrue(SiteEntityQuery.filter(sites, matching: "zzz").isEmpty)
     }
 }
 
