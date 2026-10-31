@@ -23,12 +23,18 @@ enum SiteURL {
         return try build(template: template, query: query ?? "")
     }
 
+    /// The one definition of a URL a site may open: http(s) with a host.
+    static func webURL(_ string: String) -> URL? {
+        guard let url = URL(string: string), let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http", url.host?.isEmpty == false
+        else { return nil }
+        return url
+    }
+
     /// A bookmark carries no placeholder, so there is nothing to encode - but
     /// it still has to be a real http(s) URL.
     private static func validated(_ template: String) throws -> URL {
-        guard let url = URL(string: template), let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http", url.host?.isEmpty == false
-        else { throw SearchSiteError.invalidURL(template) }
+        guard let url = webURL(template) else { throw SearchSiteError.invalidURL(template) }
         return url
     }
 
@@ -38,10 +44,7 @@ enum SiteURL {
         }
         let encoded = query.addingPercentEncoding(withAllowedCharacters: queryAllowed) ?? query
         let urlString = template.replacingOccurrences(of: "{query}", with: encoded)
-        guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http" else {
-            throw SearchSiteError.invalidURL(urlString)
-        }
+        guard let url = webURL(urlString) else { throw SearchSiteError.invalidURL(urlString) }
         return url
     }
 }

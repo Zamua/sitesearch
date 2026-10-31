@@ -52,20 +52,10 @@ struct ConfigView: View {
 
             HStack(spacing: 12) {
                 Button {
-                    // A recognized link on the clipboard (a GitHub repo, for
-                    // now) prefills the row; anything else gets the blank row.
-                    let pasted = NSPasteboard.general.string(forType: .string)
-                    let inferred = pasted.flatMap { LinkInference.infer(from: $0) }
-                    var keyword = inferred?.keyword ?? ""
-                    if !keyword.isEmpty {
-                        let taken = Set(sites.map { $0.keyword.lowercased() })
-                        let base = keyword
-                        var n = 2
-                        while taken.contains(keyword) { keyword = "\(base)\(n)"; n += 1 }
-                    }
-                    let new = Site(keyword: keyword,
-                                   name: inferred?.name ?? "New Site",
-                                   template: inferred?.template ?? "https://example.com/search?q={query}")
+                    let new = LinkInference.draftSite(
+                        pasted: NSPasteboard.general.string(forType: .string),
+                        among: sites
+                    )
                     sites.append(new)
                     selection = new.id
                 } label: {

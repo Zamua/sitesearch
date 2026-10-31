@@ -27,8 +27,8 @@ enum QuickKeySync {
 
     static func desired(bundleID: String) -> [String: String] {
         [
-            "\(bundleID).SearchSiteIntent": searchKey,
-            "\(bundleID).OpenBookmarkIntent": bookmarkKey,
+            "\(bundleID).\(String(describing: SearchSiteIntent.self))": searchKey,
+            "\(bundleID).\(String(describing: OpenBookmarkIntent.self))": bookmarkKey,
         ]
     }
 

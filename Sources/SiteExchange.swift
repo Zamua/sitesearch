@@ -45,22 +45,12 @@ enum SiteExchange {
     static func merge(_ entries: [Entry], into sites: [Site]) -> (result: [Site], addedCount: Int) {
         var result = sites
         var existingPairs = Set(sites.map { "\($0.name)|\($0.template)" })
-        var takenKeywords = Set(sites.map { $0.keyword.lowercased() })
         var added = 0
         for entry in entries {
             guard !existingPairs.contains("\(entry.name)|\(entry.template)") else { continue }
-            var keyword = entry.keyword
-            if !keyword.isEmpty {
-                var n = 2
-                while takenKeywords.contains(keyword.lowercased()) {
-                    keyword = "\(entry.keyword)\(n)"
-                    n += 1
-                }
-            }
-            let site = Site(keyword: keyword, name: entry.name, template: entry.template)
-            result.append(site)
+            let keyword = SiteOps.uniqueKeyword(entry.keyword, among: result)
+            result.append(Site(keyword: keyword, name: entry.name, template: entry.template))
             existingPairs.insert("\(entry.name)|\(entry.template)")
-            if !keyword.isEmpty { takenKeywords.insert(keyword.lowercased()) }
             added += 1
         }
         return (result, added)

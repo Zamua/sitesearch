@@ -25,13 +25,10 @@ enum Favicon {
 
     /// The scheme+host the icon should come from, derived from the template.
     static func origin(forTemplate template: String) -> URL? {
-        guard let url = URL(string: template.replacingOccurrences(of: "{query}", with: "probe")),
-              let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
-              let host = url.host, !host.isEmpty
-        else { return nil }
+        guard let url = SiteURL.webURL(template.replacingOccurrences(of: "{query}", with: "probe")) else { return nil }
         var components = URLComponents()
-        components.scheme = scheme
-        components.host = host
+        components.scheme = url.scheme?.lowercased()
+        components.host = url.host
         components.port = url.port
         return components.url
     }
