@@ -40,12 +40,6 @@ struct SearchSiteIntent: AppIntent {
         }
         return .result()
     }
-
-    /// Kept as the app-facing spelling; the implementation lives in SiteURL so
-    /// the MCP server can validate templates without importing AppIntents.
-    static func buildURL(template: String, query: String) throws -> URL {
-        try SiteURL.build(template: template, query: query)
-    }
 }
 
 /// Spotlight shows an intent's error through this conformance; the text

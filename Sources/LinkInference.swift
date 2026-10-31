@@ -16,13 +16,26 @@ struct InferredSite: Equatable {
 }
 
 enum LinkInference {
+    /// The row Add Site creates: prefilled from a recognized link on the
+    /// clipboard, with its keyword made unique among `sites`, or a blank
+    /// search row when nothing is recognized.
+    static func draftSite(pasted: String?, among sites: [Site]) -> Site {
+        guard let inferred = pasted.flatMap(infer) else {
+            return Site(keyword: "", name: "New Site", template: "https://example.com/search?q={query}")
+        }
+        return Site(
+            keyword: SiteOps.uniqueKeyword(inferred.keyword, among: sites),
+            name: inferred.name,
+            template: inferred.template
+        )
+    }
+
     /// Adapter order matters only when hosts overlap; today they don't.
     static let inferrers: [LinkInferrer] = [GitHubRepoInferrer()]
 
     static func infer(from text: String) -> InferredSite? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http" else { return nil }
+        guard let url = SiteURL.webURL(trimmed) else { return nil }
         for inferrer in inferrers {
             if let hit = inferrer.infer(from: url) { return hit }
         }

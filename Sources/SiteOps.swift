@@ -65,6 +65,20 @@ enum SiteOps {
         }
     }
 
+    /// `wanted` if no site uses it (case-insensitively), else the first free
+    /// `wanted2`, `wanted3`, ... An empty keyword is returned as-is.
+    static func uniqueKeyword(_ wanted: String, among sites: [Site]) -> String {
+        guard !wanted.isEmpty else { return wanted }
+        let taken = Set(sites.map { $0.keyword.lowercased() })
+        var candidate = wanted
+        var n = 2
+        while taken.contains(candidate.lowercased()) {
+            candidate = "\(wanted)\(n)"
+            n += 1
+        }
+        return candidate
+    }
+
     private static func assertKeywordFree(_ keyword: String, in sites: [Site], excluding id: UUID? = nil) throws {
         let needle = keyword.trimmingCharacters(in: .whitespaces).lowercased()
         let clash = sites.contains { $0.keyword.lowercased() == needle && $0.id != id }

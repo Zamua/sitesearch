@@ -30,9 +30,12 @@ Model / storage:
 - `Sources/SearchSiteIntent.swift` - the search intent: two parameters (site
   entity + query). `supportedModes: .background`
   (macOS 26 API) so the app never foregrounds; `perform()` opens the URL via
-  `NSWorkspace.shared.open`. Owns `buildURL`: RFC 3986 unreserved chars only
-  (`.urlQueryAllowed` would pass `&`, `=`, `+` through), plus `{query}` and
-  http(s)-scheme validation.
+  `NSWorkspace.shared.open`. URL building lives in `SiteURL` (shared with the
+  MCP tool): RFC 3986 unreserved chars only (`.urlQueryAllowed` would pass `&`,
+  `=`, `+` through), `{query}` validation, and `SiteURL.webURL`, the one
+  definition of an openable URL (http(s) with a host), which link inference
+  and favicon origins use too. `SiteOps.uniqueKeyword` is the one keyword
+  de-duplicator (import merge, Add Site's `LinkInference.draftSite`).
 - `Sources/OpenBookmarkIntent.swift` - the bookmark intent: one parameter, no
   query. Separate from the search intent because Spotlight cannot vary a
   `parameterSummary` per selected entity; the header comment records the three

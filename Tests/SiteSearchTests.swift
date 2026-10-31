@@ -3,27 +3,27 @@ import XCTest
 
 final class BuildURLTests: XCTestCase {
     func testSpacesArePercentEncoded() throws {
-        let url = try SearchSiteIntent.buildURL(template: "https://example.com/s?q={query}", query: "hello world")
+        let url = try SiteURL.build(template: "https://example.com/s?q={query}", query: "hello world")
         XCTAssertEqual(url.absoluteString, "https://example.com/s?q=hello%20world")
     }
 
     func testReservedCharactersAreEncoded() throws {
-        let url = try SearchSiteIntent.buildURL(template: "https://example.com/s?q={query}", query: "c++ & a=b?")
+        let url = try SiteURL.build(template: "https://example.com/s?q={query}", query: "c++ & a=b?")
         XCTAssertEqual(url.absoluteString, "https://example.com/s?q=c%2B%2B%20%26%20a%3Db%3F")
     }
 
     func testNonASCIIIsEncoded() throws {
-        let url = try SearchSiteIntent.buildURL(template: "https://example.com/s?q={query}", query: "café")
+        let url = try SiteURL.build(template: "https://example.com/s?q={query}", query: "café")
         XCTAssertEqual(url.absoluteString, "https://example.com/s?q=caf%C3%A9")
     }
 
     func testUnreservedCharactersPassThrough() throws {
-        let url = try SearchSiteIntent.buildURL(template: "https://example.com/s?q={query}", query: "a-b_c.d~e")
+        let url = try SiteURL.build(template: "https://example.com/s?q={query}", query: "a-b_c.d~e")
         XCTAssertEqual(url.absoluteString, "https://example.com/s?q=a-b_c.d~e")
     }
 
     func testMissingPlaceholderThrows() {
-        XCTAssertThrowsError(try SearchSiteIntent.buildURL(template: "https://example.com/s?q=", query: "x")) { error in
+        XCTAssertThrowsError(try SiteURL.build(template: "https://example.com/s?q=", query: "x")) { error in
             guard case SearchSiteError.missingPlaceholder = error else {
                 return XCTFail("expected missingPlaceholder, got \(error)")
             }
@@ -31,7 +31,7 @@ final class BuildURLTests: XCTestCase {
     }
 
     func testNonHTTPSchemeThrows() {
-        XCTAssertThrowsError(try SearchSiteIntent.buildURL(template: "file:///tmp/{query}", query: "x")) { error in
+        XCTAssertThrowsError(try SiteURL.build(template: "file:///tmp/{query}", query: "x")) { error in
             guard case SearchSiteError.invalidURL = error else {
                 return XCTFail("expected invalidURL, got \(error)")
             }
@@ -39,7 +39,7 @@ final class BuildURLTests: XCTestCase {
     }
 
     func testUppercaseSchemeAccepted() throws {
-        let url = try SearchSiteIntent.buildURL(template: "HTTPS://example.com/s?q={query}", query: "x")
+        let url = try SiteURL.build(template: "HTTPS://example.com/s?q={query}", query: "x")
         XCTAssertEqual(url.scheme?.lowercased(), "https")
     }
 }
@@ -201,7 +201,7 @@ final class DefaultSitesTests: XCTestCase {
 
     func testEveryDefaultBuildsAValidURL() throws {
         for site in SiteStore.defaults {
-            let url = try SearchSiteIntent.buildURL(template: site.template, query: "hello world")
+            let url = try SiteURL.build(template: site.template, query: "hello world")
             XCTAssertNotNil(url.host, "\(site.name) built URL without a host")
         }
     }
@@ -331,6 +331,17 @@ final class SiteOpsTests: XCTestCase {
         assertThrows(.notFound("nope")) {
             _ = try SiteOps.remove(from: base, selector: "nope")
         }
+    }
+
+    func testUniqueKeywordIsCaseInsensitive() {
+        let sites = [Site(keyword: "repo", name: "r", template: "https://r.example/?q={query}")]
+        XCTAssertEqual(SiteOps.uniqueKeyword("Repo", among: sites), "Repo2")
+        XCTAssertEqual(SiteOps.uniqueKeyword("free", among: sites), "free")
+        XCTAssertEqual(SiteOps.uniqueKeyword("", among: sites), "")
+    }
+
+    func testASearchTemplateNeedsAHost() {
+        XCTAssertThrowsError(try SiteOps.validate(template: "https:///search?q={query}"))
     }
 }
 
@@ -1173,5 +1184,20 @@ final class LinkInferenceTests: XCTestCase {
         XCTAssertTrue(site.isBookmark)
         let url = try SiteURL.resolve(template: hit.template, query: nil)
         XCTAssertEqual(url.absoluteString, "https://github.com/Zamua/sitesearch")
+    }
+
+    func testDraftFromARepoLinkIsABookmarkWithAFreeKeyword() {
+        let existing = [Site(keyword: "SiteSearch", name: "x", template: "https://x.example/?q={query}")]
+        let draft = LinkInference.draftSite(pasted: "https://github.com/Zamua/sitesearch", among: existing)
+        XCTAssertTrue(draft.isBookmark)
+        XCTAssertEqual(draft.name, "sitesearch")
+        XCTAssertEqual(draft.keyword, "sitesearch2", "keyword collides case-insensitively with an existing one")
+    }
+
+    func testDraftWithNothingRecognizedIsABlankSearchRow() {
+        let draft = LinkInference.draftSite(pasted: "not a link", among: [])
+        XCTAssertEqual(draft.keyword, "")
+        XCTAssertFalse(draft.isBookmark)
+        XCTAssertEqual(LinkInference.draftSite(pasted: nil, among: []).keyword, "")
     }
 }
