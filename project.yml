@@ -29,10 +29,10 @@ targets:
       - target: sitesearch-mcp
         copy:
           destination: executables
-          # Nested executables must carry their own signature or notarization
-          # rejects the bundle. NB: adding `embed: false` here silently drops
+          # The tool target signs its own binary (hardened, Developer ID in a
+          # release build) and the copy keeps that signature, which is what
+          # notarization checks. NB: adding `embed: false` here silently drops
           # the whole copy phase.
-          codeSign: true
     scheme:
       testTargets:
         - SiteSearchTests

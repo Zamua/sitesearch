@@ -110,7 +110,9 @@ Sharing:
 
 - `Sources/SiteExchange.swift` - the `.sitesearch` format (JSON v1, no ids -
   the receiver mints its own so imports never collide with the sender's entity
-  identifiers). Merge skips entries whose (name, template) already exists and
+  identifiers). The file is untrusted: `parse` runs every entry through
+  `SiteOps.validate` and returns the rejects with reasons, which the import
+  sheet lists. Merge skips entries whose (name, template) already exists and
   suffixes colliding keywords.
 - `Sources/ShareSheets.swift` - export sheet (per-site checkboxes ->
   ShareLink / save panel) and import sheet (double-click a `.sitesearch` file,
@@ -186,7 +188,9 @@ stale one if a build ever complains about ambiguity.
 - `make test` - unit tests (URL building, defaults integrity, quick-key
   merge + legacy pruning, slot-config migration, entity filtering, search /
   bookmark split, site operations, locked mutation, MCP protocol + tools,
-  share/import round-trip).
+  share/import round-trip, window persistence, release config). The release
+  config tests read the built bundle and the generated `project.pbxproj`
+  (parsed as a plist, per target and config), never project.yml text.
   Note the test host IS the app binary, so a trap inside a test (a force
   unwrap of a stub's nil) kills the runner mid-suite and pops a macOS crash
   dialog. Use `XCTUnwrap`, never `!`, especially in red-phase tests.
@@ -255,9 +259,15 @@ fix this; a transaction makes the overwrite atomic, not correct.
    applied inside `mutate`. Membership in baseline separates "the window added
    this" from "someone else deleted this"; per-field comparison over
    `SiteReconcile.fields` (a test checks it covers every editable `Site` field)
-   separates "the window changed this" from "keep the external value". A 1.5s poll of the
-   file's mtime pulls in external edits while the window sits open, with
-   `seenStamp` so our own saves are not mistaken for someone else's.
+   separates "the window changed this" from "keep the external value".
+   `SiteReconcile.persistable` is what a save writes: a row the window changed
+   or added is written only once `SiteOps.problem` finds nothing wrong, while
+   rows it did not touch are kept as they are (a hand-edited bad row is never
+   erased). `SiteReconcile.absorb` is how the window reads disk, after a save
+   or the 1.5s mtime poll: its unsaved edits stay shown and `baseline` becomes
+   disk, so a held-back or not-yet-saved edit stays pending. Baselining the
+   merged view instead marked such an edit as saved and lost it. `seenStamp`
+   keeps our own saves from looking like someone else's.
 
 ## Known unknowns (prototype findings go here)
 

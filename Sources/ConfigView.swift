@@ -16,7 +16,7 @@ struct ConfigView: View {
     @State private var syncMessage: String?
     @State private var saveError: String?
     @State private var showingExport = false
-    @State private var importEntries: [SiteExchange.Entry]?
+    @State private var importing: SiteExchange.Parsed?
     /// Modification stamp of the last write we know about, so our own saves
     /// are not mistaken for someone else's edit.
     @State private var seenStamp: Date?
@@ -33,7 +33,13 @@ struct ConfigView: View {
         VStack(alignment: .leading, spacing: 0) {
             Table(sites, selection: $selection) {
                 TableColumn("") { site in
-                    SiteIcon(site: site, generation: iconGeneration)
+                    if let problem = SiteOps.problem(with: site, among: sites) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .help(problem.localizedDescription)
+                    } else {
+                        SiteIcon(site: site, generation: iconGeneration)
+                    }
                 }
                 .width(20)
                 TableColumn("Name") { site in
@@ -84,6 +90,10 @@ struct ConfigView: View {
                     Label(saveError, systemImage: "exclamationmark.triangle")
                         .font(.callout)
                         .foregroundStyle(.red)
+                } else if sites.contains(where: { SiteOps.problem(with: $0, among: sites) != nil }) {
+                    Label("Rows marked with a warning are not saved until fixed.", systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
                 } else {
                     Text(syncMessage ?? "In Spotlight (Cmd-Space): ss, then a keyword, Tab, your query")
                         .font(.callout)
@@ -114,20 +124,21 @@ struct ConfigView: View {
             let current = Self.stamp(of: SiteStore.fileURL)
             guard current != seenStamp else { return }
             seenStamp = current
-            let merged = SiteReconcile.apply(edited: sites, baseline: baseline, disk: SiteStore.load())
-            guard merged != sites else { return }
-            saveTask?.cancel()
-            sites = merged
-            baseline = merged
+            let (shown, disk) = SiteReconcile.absorb(disk: SiteStore.load(), edited: sites, baseline: baseline)
+            baseline = disk
+            if shown != sites { sites = shown }
         }
         .sheet(isPresented: $showingExport) {
             ExportSheet(sites: sites)
         }
         .sheet(item: Binding(
-            get: { importEntries.map(ImportPayload.init) },
-            set: { importEntries = $0?.entries }
+            get: { importing.map(ImportPayload.init) },
+            set: { importing = $0?.parsed }
         )) { payload in
-            ImportSheet(entries: payload.entries) { chosen in
+            ImportSheet(
+                entries: payload.parsed.entries,
+                skipped: payload.parsed.rejected.map { "\($0.entry.name): \($0.reason)" }
+            ) { chosen in
                 let (merged, added) = SiteExchange.merge(chosen, into: sites)
                 sites = merged
                 save()
@@ -135,10 +146,14 @@ struct ConfigView: View {
             }
         }
         .onOpenURL { url in
-            guard url.pathExtension.lowercased() == SiteExchange.fileExtension,
-                  let data = try? Data(contentsOf: url),
-                  let entries = try? SiteExchange.parse(data), !entries.isEmpty else { return }
-            importEntries = entries
+            guard url.pathExtension.lowercased() == SiteExchange.fileExtension else { return }
+            do {
+                let parsed = try SiteExchange.parse(try Data(contentsOf: url))
+                guard !parsed.entries.isEmpty || !parsed.rejected.isEmpty else { return }
+                importing = parsed
+            } catch {
+                syncMessage = "Could not import \(url.lastPathComponent): \(error.localizedDescription)"
+            }
         }
     }
 
@@ -163,8 +178,8 @@ struct ConfigView: View {
     }
 
     private struct ImportPayload: Identifiable {
-        var entries: [SiteExchange.Entry]
-        var id: String { entries.map(\.id).joined(separator: ",") }
+        var parsed: SiteExchange.Parsed
+        var id: String { (parsed.entries + parsed.rejected.map(\.entry)).map(\.id).joined(separator: ",") }
     }
 
     /// Reconciles this window's edits against fresh disk state under the
@@ -174,11 +189,12 @@ struct ConfigView: View {
         let base = baseline
         do {
             let written = try SiteStore.mutate { disk in
-                let result = SiteReconcile.apply(edited: edited, baseline: base, disk: disk)
+                let result = SiteReconcile.persistable(edited: edited, baseline: base, disk: disk)
                 return (result, result)
             }
-            sites = written
-            baseline = written
+            // A row held back as invalid stays on screen and pending, so the
+            // user keeps typing into it instead of watching it revert.
+            (sites, baseline) = SiteReconcile.absorb(disk: written, edited: edited, baseline: base)
             saveError = nil
             seenStamp = Self.stamp(of: SiteStore.fileURL)
             refreshIcons(previous: base, current: written)
