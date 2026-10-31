@@ -114,6 +114,33 @@ enum Favicon {
         }
     }
 
+    /// Brings the icon cache in line with a change from `old` to `new`: a
+    /// removed site, or one whose origin moved, loses its icon, and a new or
+    /// moved site is fetched unless already cached. `old: []` backfills a whole
+    /// list. Blocks on the network, so callers run it off the main thread.
+    /// Returns whether the cache changed.
+    @discardableResult
+    static func refresh(from old: [Site], to new: [Site], in directory: URL = directoryURL, fetch: (URL) -> Data?) -> Bool {
+        let oldByID = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let newIDs = Set(new.map(\.id))
+        var changed = false
+        for site in old where !newIDs.contains(site.id) && cachedData(for: site.id, in: directory) != nil {
+            invalidate(site.id, in: directory)
+            changed = true
+        }
+        for site in new {
+            if let before = oldByID[site.id] {
+                guard origin(forTemplate: before.template) != origin(forTemplate: site.template) else { continue }
+                invalidate(site.id, in: directory)
+                changed = true
+            }
+            if cachedData(for: site.id, in: directory) == nil, ensureCached(for: site, in: directory, fetch: fetch) {
+                changed = true
+            }
+        }
+        return changed
+    }
+
     /// Discards a cached icon, so a template change re-fetches.
     static func invalidate(_ id: UUID, in directory: URL = directoryURL) {
         try? FileManager.default.removeItem(at: cacheURL(for: id, in: directory))

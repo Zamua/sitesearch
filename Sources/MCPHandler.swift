@@ -114,30 +114,22 @@ struct MCPHandler {
                 try SiteOps.add(to: $0, name: name, keyword: keyword, template: template)
             }
             // Best-effort: a site whose icon will not load is still a good site.
-            Favicon.ensureCached(for: added, in: iconDirectory, fetch: iconFetch)
+            Favicon.refresh(from: [], to: [added], in: iconDirectory, fetch: iconFetch)
             return try encode(Self.describe(added))
 
         case .update(let selector, let name, let keyword, let template):
-            let previousOrigin = template.flatMap { _ in
-                SiteOps.find(SiteStore.load(from: storeURL), selector)
-                    .flatMap { Favicon.origin(forTemplate: $0.template) }
-            }
+            let previous = SiteOps.find(SiteStore.load(from: storeURL), selector)
             let updated = try SiteStore.mutate(at: storeURL) {
                 try SiteOps.update(in: $0, selector: selector, name: name, keyword: keyword, template: template)
             }
-            // Only re-fetch when the icon could actually have changed - a
-            // rename should not hit the network.
-            if let template, Favicon.origin(forTemplate: template) != previousOrigin {
-                Favicon.invalidate(updated.id, in: iconDirectory)
-                Favicon.ensureCached(for: updated, in: iconDirectory, fetch: iconFetch)
-            }
+            Favicon.refresh(from: previous.map { [$0] } ?? [], to: [updated], in: iconDirectory, fetch: iconFetch)
             return try encode(Self.describe(updated))
 
         case .remove(let selector):
             let removed = try SiteStore.mutate(at: storeURL) {
                 try SiteOps.remove(from: $0, selector: selector)
             }
-            Favicon.invalidate(removed.id, in: iconDirectory)
+            Favicon.refresh(from: [removed], to: [], in: iconDirectory, fetch: iconFetch)
             return try encode(Self.describe(removed))
 
         case .search(let selector, let query):

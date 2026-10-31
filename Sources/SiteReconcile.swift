@@ -12,6 +12,10 @@ import Foundation
 /// "someone else deleted this", and per-field comparison against baseline is
 /// what separates "the window changed this" from "leave the external value".
 enum SiteReconcile {
+    /// Every editable field of `Site`. A test checks this covers all stored
+    /// properties but `id`, so a new field cannot be silently dropped on merge.
+    static var fields: [WritableKeyPath<Site, String>] { [\.name, \.keyword, \.template] }
+
     static func apply(edited: [Site], baseline: [Site], disk: [Site]) -> [Site] {
         let baselineByID = Dictionary(baseline.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let editedByID = Dictionary(edited.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -31,9 +35,9 @@ enum SiteReconcile {
             // Known to the window: take only the fields it actually changed,
             // leaving everything else at the external value.
             if let base = baselineByID[site.id] {
-                if edit.name != base.name { site.name = edit.name }
-                if edit.keyword != base.keyword { site.keyword = edit.keyword }
-                if edit.template != base.template { site.template = edit.template }
+                for field in fields where edit[keyPath: field] != base[keyPath: field] {
+                    site[keyPath: field] = edit[keyPath: field]
+                }
             } else {
                 site = edit
             }

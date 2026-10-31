@@ -21,12 +21,16 @@ Model / storage:
   of the format. Unknown keys such as the old per-site `slot` are ignored.
   `save` throws; `mutate` propagates, so the MCP tools and the window report a
   write that did not land.
-- `Sources/SiteEntity.swift` - `SiteEntity: AppEntity` + `SiteEntityQuery`
-  (`EnumerableEntityQuery` for the full dropdown, `EntityStringQuery` so the
-  keyword alias matches during type-to-filter). Entity `id` is the Site's
-  UUID string (stable across renames), keyword is the subtitle. `filter(_:
-  matching:)` is the pure predicate behind `entities(matching:)` - name
-  substring OR keyword prefix - extracted so it is unit-testable.
+- `Sources/SiteEntity.swift` - `SiteEntity` and `BookmarkEntity` share
+  everything through `SiteBackedEntity` (fields, favicon display) and
+  `SiteBackedQuery` (`EnumerableEntityQuery` for the full dropdown,
+  `EntityStringQuery` so the keyword alias matches during type-to-filter); each
+  concrete type only names its list and fallback glyph. Entity `id` is the
+  Site's UUID string (stable across renames), keyword is the subtitle.
+  `filter(_:matching:)` is the pure predicate behind `entities(matching:)` -
+  name substring OR keyword prefix. A refactor here must leave
+  `Metadata.appintents` unchanged: compare it before and after (the extractor
+  may reorder `resolvableInputTypes`; that is not a change).
 - `Sources/SearchSiteIntent.swift` - the search intent: two parameters (site
   entity + query). `supportedModes: .background`
   (macOS 26 API) so the app never foregrounds; `perform()` opens the URL via
@@ -66,9 +70,10 @@ Config changes and agent access:
   else), caching bytes at `icons/<site-uuid>` so `sites.json` stays clean
   JSON. Tries `/favicon.ico`, then parses the page's `<link rel="...icon...">`
   tags with a regex - one attribute out of <head> does not justify an HTML
-  parser. Fetching happens on add, on template change, and as a launch-time
-  backfill of missing icons (`SiteSearchApp.init`); never on rename and never
-  at draw time: `displayRepresentation` is synchronous, so a
+  parser. Every cache change goes through `Favicon.refresh(from:to:)`: a
+  removed site or one whose origin moved loses its icon, a new or moved one is
+  fetched, and `from: []` backfills (app launch, window open). Never on rename
+  and never at draw time: `displayRepresentation` is synchronous, so a
   network call there would stall the Spotlight dropdown. The fetcher is
   injected so tests run offline. Verified live: Google/GitHub return `.ico`,
   hn.algolia.com falls through to a declared PNG, and NSImage decodes both.
@@ -248,8 +253,9 @@ fix this; a transaction makes the overwrite atomic, not correct.
    needs it) but never writes it back wholesale. `SiteReconcile.apply` is a
    three-way merge of (window's edits, baseline it last saw, fresh disk),
    applied inside `mutate`. Membership in baseline separates "the window added
-   this" from "someone else deleted this"; per-field comparison separates "the
-   window changed this" from "keep the external value". A 1.5s poll of the
+   this" from "someone else deleted this"; per-field comparison over
+   `SiteReconcile.fields` (a test checks it covers every editable `Site` field)
+   separates "the window changed this" from "keep the external value". A 1.5s poll of the
    file's mtime pulls in external edits while the window sits open, with
    `seenStamp` so our own saves are not mistaken for someone else's.
 

@@ -189,27 +189,11 @@ struct ConfigView: View {
         }
     }
 
-    /// Fetches any missing favicons off the main thread. Never blocks the UI,
-    /// and never runs while Spotlight is drawing - the entity reads whatever
-    /// is already cached.
+    /// Off the main thread: icon fetches hit the network, and Spotlight only
+    /// ever reads what is already cached.
     private func refreshIcons(previous: [Site], current: [Site]) {
-        let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var wanted: [Site] = []
-        for site in current {
-            if let old = previousByID[site.id],
-               Favicon.origin(forTemplate: old.template) != Favicon.origin(forTemplate: site.template) {
-                Favicon.invalidate(site.id)
-            }
-            if Favicon.cachedData(for: site.id) == nil { wanted.append(site) }
-        }
-        guard !wanted.isEmpty else { return }
-        let targets = wanted
         Task.detached(priority: .utility) {
-            var fetched = false
-            for site in targets where Favicon.ensureCached(for: site, fetch: Favicon.download) {
-                fetched = true
-            }
-            if fetched {
+            if Favicon.refresh(from: previous, to: current, fetch: Favicon.download) {
                 await MainActor.run { iconGeneration += 1 }
             }
         }
