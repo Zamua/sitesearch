@@ -4,6 +4,11 @@ options:
   deploymentTarget:
     macOS: "26.0"
   createIntermediateGroups: true
+settings:
+  base:
+    # Project-wide so the app and the embedded MCP tool report one version.
+    MARKETING_VERSION: "0.11.1"
+    CURRENT_PROJECT_VERSION: "1"
 targets:
   SiteSearch:
     type: application
@@ -61,8 +66,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zamua.SiteSearch
         PRODUCT_NAME: SiteSearch
-        MARKETING_VERSION: "0.11.1"
-        CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         CODE_SIGN_IDENTITY: "Apple Development"
         CODE_SIGN_STYLE: Automatic
@@ -91,6 +94,11 @@ targets:
       base:
         PRODUCT_NAME: sitesearch-mcp
         SWIFT_VERSION: "6.0"
+        # An Info.plist linked into the binary, so the tool knows its version
+        # (MCP initialize reports it) even when run outside the app bundle.
+        GENERATE_INFOPLIST_FILE: YES
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.zamua.SiteSearch.mcp
         # Nested executables need this in their own right; inheriting from the
         # app target does not happen, and notarization checks every binary.
         ENABLE_HARDENED_RUNTIME: YES

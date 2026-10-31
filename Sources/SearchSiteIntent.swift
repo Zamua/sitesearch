@@ -48,16 +48,11 @@ struct SearchSiteIntent: AppIntent {
     }
 }
 
+/// Spotlight shows an intent's error through this conformance; the text
+/// itself lives on `SearchSiteError` so the MCP server reads the same words.
 extension SearchSiteError: CustomLocalizedStringResourceConvertible {
     var localizedStringResource: LocalizedStringResource {
-        switch self {
-        case .invalidURL(let s):
-            return "The site's URL template produced an invalid URL: \(s)"
-        case .missingPlaceholder(let t):
-            return "The site's URL template is missing the {query} placeholder: \(t)"
-        case .openFailed(let s):
-            return "The browser could not open: \(s)"
-        }
+        "\(errorDescription ?? "Search failed.")"
     }
 }
 
