@@ -29,7 +29,8 @@ extension SiteBackedEntity {
     /// Read from disk synchronously and deliberately: Spotlight calls this
     /// while drawing the list, so it must never touch the network.
     private var icon: DisplayRepresentation.Image {
-        if let id = UUID(uuidString: id), let data = Favicon.cachedData(for: id) {
+        if let id = UUID(uuidString: id),
+           let data = Favicon.cachedData(for: Site(id: id, keyword: keyword, name: name, template: template)) {
             return DisplayRepresentation.Image(data: data)
         }
         return DisplayRepresentation.Image(systemName: Self.fallbackSymbol)

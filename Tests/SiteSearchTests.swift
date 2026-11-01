@@ -677,7 +677,7 @@ final class FaviconTests: XCTestCase {
 
     // MARK: refresh
 
-    private func icon(_ site: Site) -> Data? { Favicon.cachedData(for: site.id, in: tmp) }
+    private func icon(_ site: Site) -> Data? { Favicon.cachedData(for: site, in: tmp) }
 
     func testRefreshFetchesNewSitesAndDropsRemovedOnes() {
         let kept = site("https://a.example/?q={query}")
@@ -711,6 +711,19 @@ final class FaviconTests: XCTestCase {
         XCTAssertEqual(icon(s), Data("new".utf8), "a new origin must refetch")
     }
 
+    func testALateFetchForAnOldOriginCannotReplaceTheNewOnesIcon() {
+        let id = UUID()
+        let atA = Site(id: id, keyword: "k", name: "N", template: "https://a.example/?q={query}")
+        let atB = Site(id: id, keyword: "k", name: "N", template: "https://b.example/?q={query}")
+        // A's fetch stalls; while it waits the site moves to B and B's icon lands.
+        Favicon.refresh(from: [], to: [atA], in: tmp) { url in
+            guard url.host == "a.example" else { return nil }
+            Favicon.refresh(from: [atA], to: [atB], in: tmp) { _ in Data("B".utf8) }
+            return Data("A".utf8)
+        }
+        XCTAssertEqual(icon(atB), Data("B".utf8))
+    }
+
     // MARK: origin
 
     func testOriginStripsPathAndQuery() {
@@ -727,16 +740,23 @@ final class FaviconTests: XCTestCase {
 
     // MARK: cache
 
-    func testCachedDataIsNilUntilSomethingIsWritten() throws {
-        let id = UUID()
-        XCTAssertNil(Favicon.cachedData(for: id, in: tmp))
-        try Data("png".utf8).write(to: Favicon.cacheURL(for: id, in: tmp))
-        XCTAssertEqual(Favicon.cachedData(for: id, in: tmp), Data("png".utf8))
+    func testTheCacheIsKeptPerSiteAndOrigin() {
+        let a = site("https://a.example/?q={query}")
+        var moved = a
+        moved.template = "https://b.example/path?q={query}"
+        let sameOrigin = site("https://a.example/other?q={query}")
+        let urls = [a, moved, sameOrigin].compactMap { Favicon.cacheURL(for: $0, in: tmp) }
+        XCTAssertEqual(Set(urls).count, 3)
+        XCTAssertNil(Favicon.cacheURL(for: site("file:///tmp/{query}"), in: tmp))
     }
 
-    func testCacheURLIsPerSite() {
-        let a = UUID(), b = UUID()
-        XCTAssertNotEqual(Favicon.cacheURL(for: a, in: tmp), Favicon.cacheURL(for: b, in: tmp))
+    func testAPlainFileFromThePerSiteLayoutGivesWay() throws {
+        let s = site("https://a.example/?q={query}")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: tmp.appendingPathComponent(s.id.uuidString))
+        XCTAssertNil(icon(s))
+        XCTAssertTrue(Favicon.ensureCached(for: s, in: tmp) { _ in Data("new".utf8) })
+        XCTAssertEqual(icon(s), Data("new".utf8))
     }
 
     // MARK: HTML parsing
@@ -777,12 +797,12 @@ final class FaviconTests: XCTestCase {
             url.absoluteString == "https://example.com/favicon.ico" ? png : nil
         }
         XCTAssertTrue(ok)
-        XCTAssertEqual(Favicon.cachedData(for: site.id, in: tmp), png)
+        XCTAssertEqual(icon(site), png)
     }
 
     func testEnsureCachedSkipsTheNetworkWhenAlreadyCached() throws {
         let site = site("https://example.com/search?q={query}")
-        try Data("existing".utf8).write(to: Favicon.cacheURL(for: site.id, in: tmp))
+        XCTAssertTrue(Favicon.ensureCached(for: site, in: tmp) { _ in Data("existing".utf8) })
         var fetched: [URL] = []
         let ok = Favicon.ensureCached(for: site, in: tmp) { url in
             fetched.append(url)
@@ -790,7 +810,7 @@ final class FaviconTests: XCTestCase {
         }
         XCTAssertTrue(ok)
         XCTAssertTrue(fetched.isEmpty, "re-fetched an icon it already had")
-        XCTAssertEqual(Favicon.cachedData(for: site.id, in: tmp), Data("existing".utf8))
+        XCTAssertEqual(icon(site), Data("existing".utf8))
     }
 
     /// Most sites do not serve /favicon.ico any more; fall back to what the
@@ -807,21 +827,21 @@ final class FaviconTests: XCTestCase {
             }
         }
         XCTAssertTrue(ok)
-        XCTAssertEqual(Favicon.cachedData(for: site.id, in: tmp), png)
+        XCTAssertEqual(icon(site), png)
     }
 
     func testEnsureCachedWritesNothingWhenEverythingFails() {
         let site = site("https://example.com/search?q={query}")
         let ok = Favicon.ensureCached(for: site, in: tmp) { _ in nil }
         XCTAssertFalse(ok)
-        XCTAssertNil(Favicon.cachedData(for: site.id, in: tmp))
+        XCTAssertNil(icon(site))
     }
 
     func testEnsureCachedIgnoresEmptyResponses() {
         let site = site("https://example.com/search?q={query}")
         let ok = Favicon.ensureCached(for: site, in: tmp) { _ in Data() }
         XCTAssertFalse(ok, "an empty body is not an icon")
-        XCTAssertNil(Favicon.cachedData(for: site.id, in: tmp))
+        XCTAssertNil(icon(site))
     }
 
     func testEnsureCachedIsANoOpForAnUnusableTemplate() {
@@ -1172,6 +1192,10 @@ final class MCPHandlerTests: XCTestCase {
 
     // MARK: favicons
 
+    private func icon(_ id: UUID) -> Data? {
+        SiteStore.load(from: file).first { $0.id == id }.flatMap { Favicon.cachedData(for: $0, in: iconDir) }
+    }
+
     private func addedSiteID(_ text: String) throws -> UUID {
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
         return try XCTUnwrap(UUID(uuidString: try XCTUnwrap(json["id"] as? String)))
@@ -1184,7 +1208,7 @@ final class MCPHandlerTests: XCTestCase {
         ])
         XCTAssertFalse(isError, text)
         let id = try addedSiteID(text)
-        XCTAssertEqual(Favicon.cachedData(for: id, in: iconDir), Data("PNGBYTES".utf8))
+        XCTAssertEqual(icon(id), Data("PNGBYTES".utf8))
         XCTAssertEqual(network.requested.first?.absoluteString, "https://hn.algolia.com/favicon.ico")
     }
 
@@ -1196,7 +1220,7 @@ final class MCPHandlerTests: XCTestCase {
         ])
         XCTAssertFalse(isError, text)
         XCTAssertNotNil(SiteOps.find(SiteStore.load(from: file), "hn"))
-        XCTAssertNil(Favicon.cachedData(for: try addedSiteID(text), in: iconDir))
+        XCTAssertNil(icon(try addedSiteID(text)))
     }
 
     func testChangingATemplateRefetchesTheIcon() throws {
@@ -1205,14 +1229,14 @@ final class MCPHandlerTests: XCTestCase {
             "name": "Site", "keyword": "s1", "template": "https://one.example/?q={query}",
         ])
         let id = try addedSiteID(addText)
-        XCTAssertEqual(Favicon.cachedData(for: id, in: iconDir), Data("OLD".utf8))
+        XCTAssertEqual(icon(id), Data("OLD".utf8))
 
         network.response = Data("NEW".utf8)
         let (text, isError) = try callTool("update_site", [
             "site": "s1", "template": "https://two.example/?q={query}",
         ])
         XCTAssertFalse(isError, text)
-        XCTAssertEqual(Favicon.cachedData(for: id, in: iconDir), Data("NEW".utf8),
+        XCTAssertEqual(icon(id), Data("NEW".utf8),
                        "icon should be refetched when the origin changes")
         XCTAssertEqual(network.requested.last?.absoluteString, "https://two.example/favicon.ico")
     }

@@ -165,7 +165,7 @@ struct ConfigView: View {
         let generation: Int
 
         var body: some View {
-            if let data = Favicon.cachedData(for: site.id), let image = NSImage(data: data) {
+            if let data = Favicon.cachedData(for: site), let image = NSImage(data: data) {
                 Image(nsImage: image)
                     .resizable()
                     .interpolation(.high)

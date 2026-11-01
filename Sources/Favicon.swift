@@ -5,7 +5,10 @@ import Foundation
 /// Icons are fetched when a site is added or its template changes, never while
 /// Spotlight is drawing: `SiteEntity.displayRepresentation` is synchronous, so
 /// a network call there would stall the dropdown. Cached bytes live beside the
-/// config as `icons/<site-uuid>` and the config itself stays clean JSON.
+/// config as `icons/<site-uuid>/<origin>` and the config itself stays clean
+/// JSON. Keying by origin as well as site is what keeps a slow fetch for an
+/// origin the site has since left (from this window or from the MCP server's
+/// process) from landing on the icon of the origin it has now.
 ///
 /// Icons come from the site's own origin - no third-party favicon proxy, which
 /// would report every configured site to someone else.
@@ -14,12 +17,23 @@ enum Favicon {
         SiteStore.fileURL.deletingLastPathComponent().appendingPathComponent("icons")
     }
 
-    static func cacheURL(for id: UUID, in directory: URL = directoryURL) -> URL {
-        directory.appendingPathComponent(id.uuidString)
+    private static func siteDirectory(for id: UUID, in directory: URL) -> URL {
+        directory.appendingPathComponent(id.uuidString, isDirectory: true)
     }
 
-    static func cachedData(for id: UUID, in directory: URL = directoryURL) -> Data? {
-        let data = try? Data(contentsOf: cacheURL(for: id, in: directory))
+    /// Where the icon of the site's current origin lives; nil when the
+    /// template has no web origin.
+    static func cacheURL(for site: Site, in directory: URL = directoryURL) -> URL? {
+        guard let origin = origin(forTemplate: site.template),
+              let name = "\(origin.scheme ?? "")-\(origin.host ?? "")\(origin.port.map { "-\($0)" } ?? "")"
+                .addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: ".-")))
+        else { return nil }
+        return siteDirectory(for: site.id, in: directory).appendingPathComponent(name)
+    }
+
+    static func cachedData(for site: Site, in directory: URL = directoryURL) -> Data? {
+        guard let url = cacheURL(for: site, in: directory) else { return nil }
+        let data = try? Data(contentsOf: url)
         return (data?.isEmpty == false) ? data : nil
     }
 
@@ -81,8 +95,8 @@ enum Favicon {
     /// then whatever the page declares. Anything empty is treated as a miss.
     @discardableResult
     static func ensureCached(for site: Site, in directory: URL = directoryURL, fetch: (URL) -> Data?) -> Bool {
-        if cachedData(for: site.id, in: directory) != nil { return true }
-        guard let origin = origin(forTemplate: site.template) else { return false }
+        if cachedData(for: site, in: directory) != nil { return true }
+        guard let origin = origin(forTemplate: site.template), let target = cacheURL(for: site, in: directory) else { return false }
 
         var candidates = [origin.appendingPathComponent("favicon.ico")]
         var tried = Set<URL>()
@@ -99,19 +113,31 @@ enum Favicon {
                 }
                 continue
             }
-            return write(data, for: site.id, in: directory)
+            return write(data, to: target)
         }
         return false
     }
 
-    private static func write(_ data: Data, for id: UUID, in directory: URL) -> Bool {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    private static func write(_ data: Data, to url: URL) -> Bool {
+        let siteDirectory = url.deletingLastPathComponent()
+        var isDirectory: ObjCBool = false
+        // A plain file here is the per-site layout without origins; it gives way.
+        if FileManager.default.fileExists(atPath: siteDirectory.path, isDirectory: &isDirectory), !isDirectory.boolValue {
+            try? FileManager.default.removeItem(at: siteDirectory)
+        }
+        try? FileManager.default.createDirectory(at: siteDirectory, withIntermediateDirectories: true)
         do {
-            try data.write(to: cacheURL(for: id, in: directory), options: .atomic)
+            try data.write(to: url, options: .atomic)
             return true
         } catch {
             return false
         }
+    }
+
+    /// Removes `url` if present, returning whether anything was there.
+    private static func remove(_ url: URL?) -> Bool {
+        guard let url, FileManager.default.fileExists(atPath: url.path) else { return false }
+        return (try? FileManager.default.removeItem(at: url)) != nil
     }
 
     /// Brings the icon cache in line with a change from `old` to `new`: a
@@ -124,26 +150,19 @@ enum Favicon {
         let oldByID = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let newIDs = Set(new.map(\.id))
         var changed = false
-        for site in old where !newIDs.contains(site.id) && cachedData(for: site.id, in: directory) != nil {
-            invalidate(site.id, in: directory)
-            changed = true
+        for site in old where !newIDs.contains(site.id) {
+            changed = remove(siteDirectory(for: site.id, in: directory)) || changed
         }
         for site in new {
             if let before = oldByID[site.id] {
                 guard origin(forTemplate: before.template) != origin(forTemplate: site.template) else { continue }
-                invalidate(site.id, in: directory)
-                changed = true
+                changed = remove(cacheURL(for: before, in: directory)) || changed
             }
-            if cachedData(for: site.id, in: directory) == nil, ensureCached(for: site, in: directory, fetch: fetch) {
+            if cachedData(for: site, in: directory) == nil, ensureCached(for: site, in: directory, fetch: fetch) {
                 changed = true
             }
         }
         return changed
-    }
-
-    /// Discards a cached icon, so a template change re-fetches.
-    static func invalidate(_ id: UUID, in directory: URL = directoryURL) {
-        try? FileManager.default.removeItem(at: cacheURL(for: id, in: directory))
     }
 
     /// The real network fetch: a short timeout, because this runs inline on an
