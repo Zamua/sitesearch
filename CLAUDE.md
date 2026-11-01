@@ -70,9 +70,9 @@ Config changes and agent access:
   else), caching bytes at `icons/<site-uuid>/<origin>` so `sites.json` stays
   clean JSON. The origin in the key is what makes a slow fetch harmless: one
   for an origin the site has since left (window or MCP process) lands in that
-  origin's file, never on the current icon. Tries `/favicon.ico`, then parses the page's `<link rel="...icon...">`
-  tags with a regex - one attribute out of <head> does not justify an HTML
-  parser. Every cache change goes through `Favicon.refresh(from:to:)`: a
+  origin's file, never on the current icon. Tries `/favicon.ico`, then parses
+  the page's `<link rel="...icon...">` tags with a regex - one attribute out
+  of <head> does not justify an HTML parser. Every cache change goes through `Favicon.refresh(from:to:)`: a
   removed site or one whose origin moved loses its icon, a new or moved one is
   fetched, and `from: []` backfills (app launch, window open). Never on rename
   and never at draw time: `displayRepresentation` is synchronous, so a
