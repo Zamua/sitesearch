@@ -90,6 +90,7 @@ targets:
       - Sources/Site.swift
       - Sources/SiteOps.swift
       - Sources/SiteURL.swift
+      - Sources/TestHost.swift
     settings:
       base:
         PRODUCT_NAME: sitesearch-mcp
@@ -122,6 +123,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zamua.SiteSearchTests
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSPrincipalClass: SiteSearchTests.TestIsolation
         SWIFT_VERSION: "6.0"
         CODE_SIGN_IDENTITY: "Apple Development"
         CODE_SIGN_STYLE: Automatic

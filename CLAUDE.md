@@ -205,6 +205,13 @@ stale one if a build ever complains about ambiguity.
   Note the test host IS the app binary, so a trap inside a test (a force
   unwrap of a stub's nil) kills the runner mid-suite and pops a macOS crash
   dialog. Use `XCTUnwrap`, never `!`, especially in red-phase tests.
+  `TestHost.isActive` (XCTest's `XCTestConfigurationFilePath`) makes the app
+  skip its launch work and show no config window, and moves `SiteStore.fileURL`
+  (so icons and the lock too) into a per-run temp dir; `SiteStore.userDirectory`
+  is the real one. `Tests/TestIsolation.swift` is the bundle's principal class
+  and fails any test after which a file in the real data directory is newer
+  than the test process, or the Spotlight quick-key store changed. A real
+  SiteSearch or MCP server writing during a local run trips it too.
 - `make e2e` - `scripts/e2e-sites.sh` GETs every default template against the
   live site with a browser UA. Pass = HTTP < 400; 403/429/503 report as GATED
   (bot-blocked, not a failure - the URL still routes correctly). A unit test

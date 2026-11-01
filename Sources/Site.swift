@@ -31,9 +31,14 @@ struct Site: Codable, Identifiable, Hashable {
 /// (which may run in a background-launched instance) always sees the latest
 /// config saved from the UI.
 enum SiteStore {
+    /// The user's real data directory: the config, its lock and the icons.
+    static var userDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("SiteSearch", isDirectory: true)
+    }
+
     static var fileURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("SiteSearch/sites.json")
+        (TestHost.isActive ? TestHost.directory : userDirectory).appendingPathComponent("sites.json")
     }
 
     /// Runs `body` while holding an exclusive advisory lock, so the app and the
