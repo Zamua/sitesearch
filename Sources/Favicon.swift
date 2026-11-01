@@ -97,23 +97,14 @@ enum Favicon {
     static func ensureCached(for site: Site, in directory: URL = directoryURL, fetch: (URL) -> Data?) -> Bool {
         if cachedData(for: site, in: directory) != nil { return true }
         guard let origin = origin(forTemplate: site.template), let target = cacheURL(for: site, in: directory) else { return false }
+        func hit(_ url: URL) -> Data? { fetch(url).flatMap { $0.isEmpty ? nil : $0 } }
 
-        var candidates = [origin.appendingPathComponent("favicon.ico")]
-        var tried = Set<URL>()
-
-        while let candidate = candidates.first {
-            candidates.removeFirst()
-            guard tried.insert(candidate).inserted else { continue }
-            guard let data = fetch(candidate), !data.isEmpty else {
-                // Nothing at the conventional path - ask the page itself, once.
-                if candidates.isEmpty, tried.count == 1,
-                   let html = fetch(origin), !html.isEmpty,
-                   let markup = String(data: html, encoding: .utf8) {
-                    candidates = iconHrefs(inHTML: markup, origin: origin)
-                }
-                continue
-            }
-            return write(data, to: target)
+        let conventional = origin.appendingPathComponent("favicon.ico")
+        if let data = hit(conventional) { return write(data, to: target) }
+        guard let html = hit(origin), let markup = String(data: html, encoding: .utf8) else { return false }
+        var tried: Set<URL> = [conventional]
+        for declared in iconHrefs(inHTML: markup, origin: origin) where tried.insert(declared).inserted {
+            if let data = hit(declared) { return write(data, to: target) }
         }
         return false
     }
