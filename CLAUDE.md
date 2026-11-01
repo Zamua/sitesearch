@@ -123,7 +123,16 @@ Sharing:
 UI:
 
 - `Sources/ConfigView.swift` + `SiteSearchApp.swift` - plain SwiftUI window
-  with an editable Table; debounced saves.
+  with an editable Table. `Sources/ConfigSync.swift` is its sync loop as one
+  pure `handle(event) -> [effect]` (edited, saveDue, saved, saveFailed,
+  polled, reloaded, imported, importFailed): the only place the shown list,
+  baseline, stamp, save error and status message change. The view only
+  forwards events (user edits come from the bindings and buttons, never from
+  `onChange`, so absorbing disk is not mistaken for an edit) and performs
+  effects (one save timer, the locked save, reload, icon refresh). Saves are
+  debounced; a failed one retries every 3s while the window is open; an
+  import's status line lasts until the next edit. Tests drive it by event
+  sequences.
   A single `Window` scene, not `WindowGroup`: parallel config windows each held
   their own `@State` copy and clobbered each other's saves. App `init()` runs
   `QuickKeySync.sync()`.
@@ -269,7 +278,8 @@ fix this; a transaction makes the overwrite atomic, not correct.
    or the 1.5s mtime poll: its unsaved edits stay shown and `baseline` becomes
    disk, so a held-back or not-yet-saved edit stays pending. Baselining the
    merged view instead marked such an edit as saved and lost it. `seenStamp`
-   keeps our own saves from looking like someone else's.
+   keeps our own saves from looking like someone else's. All of this state
+   lives in `ConfigSync`.
 
 ## Known unknowns (prototype findings go here)
 

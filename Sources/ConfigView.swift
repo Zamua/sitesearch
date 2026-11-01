@@ -1,25 +1,15 @@
 import SwiftUI
 
-/// The config window: edit the list of sites Spotlight can search.
-/// Changes save to disk immediately; the intent reads the file fresh on
-/// every invocation, so there is no sync step.
-///
-/// The window is not the only writer - the MCP server edits the same file - so
-/// it never writes its `@State` list back wholesale. `baseline` records what it
-/// last saw, saves reconcile against fresh disk state under the store's lock,
-/// and a poll picks up external changes while the window is open.
+/// The config window: edit the list of sites Spotlight can search. Changes
+/// save to disk on their own; the intent reads the file fresh on every
+/// invocation, so there is no sync step. `ConfigSync` owns the save, poll and
+/// import state; this view forwards events to it and performs its effects.
 struct ConfigView: View {
-    @State private var sites: [Site] = SiteStore.load()
-    @State private var baseline: [Site] = []
+    @State private var sync = ConfigSync(sites: SiteStore.load())
+    @State private var saveTimer: Task<Void, Never>?
     @State private var selection: Site.ID?
-    @State private var saveTask: Task<Void, Never>?
-    @State private var syncMessage: String?
-    @State private var saveError: String?
     @State private var showingExport = false
     @State private var importing: SiteExchange.Parsed?
-    /// Modification stamp of the last write we know about, so our own saves
-    /// are not mistaken for someone else's edit.
-    @State private var seenStamp: Date?
     /// Bumped when background icon fetches finish, to redraw the rows.
     @State private var iconGeneration = 0
 
@@ -28,6 +18,8 @@ struct ConfigView: View {
     private static func stamp(of url: URL) -> Date? {
         try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
     }
+
+    private var sites: [Site] { sync.sites }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -62,14 +54,14 @@ struct ConfigView: View {
                         pasted: NSPasteboard.general.string(forType: .string),
                         among: sites
                     )
-                    sites.append(new)
+                    send(.edited(sites + [new]))
                     selection = new.id
                 } label: {
                     Label("Add Site", systemImage: "plus")
                 }
                 Button {
                     if let selection {
-                        sites.removeAll { $0.id == selection }
+                        send(.edited(sites.filter { $0.id != selection }))
                     }
                     selection = nil
                 } label: {
@@ -86,7 +78,7 @@ struct ConfigView: View {
 
                 Spacer()
 
-                if let saveError {
+                if let saveError = sync.saveError {
                     Label(saveError, systemImage: "exclamationmark.triangle")
                         .font(.callout)
                         .foregroundStyle(.red)
@@ -95,39 +87,16 @@ struct ConfigView: View {
                         .font(.callout)
                         .foregroundStyle(.orange)
                 } else {
-                    Text(syncMessage ?? "In Spotlight (Cmd-Space): ss, then a keyword, Tab, your query")
+                    Text(sync.message ?? "In Spotlight (Cmd-Space): ss, then a keyword, Tab, your query")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
             }
             .padding(12)
         }
-        .onAppear {
-            baseline = sites
-            seenStamp = Self.stamp(of: SiteStore.fileURL)
-            refreshIcons(previous: [], current: sites)
-        }
-        .onChange(of: sites) {
-            // Debounced: a save per keystroke is needless disk churn and
-            // widens the window where Spotlight reads a half-typed template.
-            saveTask?.cancel()
-            saveTask = Task {
-                try? await Task.sleep(for: .milliseconds(400))
-                guard !Task.isCancelled else { return }
-                save()
-            }
-        }
-        .onReceive(pollTimer) { _ in
-            // Someone else (the MCP server) may have written while the window
-            // sat open. Merge their changes in rather than overwriting them on
-            // the next keystroke.
-            let current = Self.stamp(of: SiteStore.fileURL)
-            guard current != seenStamp else { return }
-            seenStamp = current
-            let (shown, disk) = SiteReconcile.absorb(disk: SiteStore.load(), edited: sites, baseline: baseline)
-            baseline = disk
-            if shown != sites { sites = shown }
-        }
+        .onAppear { send(.appeared(stamp: Self.stamp(of: SiteStore.fileURL))) }
+        // Someone else (the MCP server) may write while the window sits open.
+        .onReceive(pollTimer) { _ in send(.polled(stamp: Self.stamp(of: SiteStore.fileURL))) }
         .sheet(isPresented: $showingExport) {
             ExportSheet(sites: sites)
         }
@@ -139,10 +108,7 @@ struct ConfigView: View {
                 entries: payload.parsed.entries,
                 skipped: payload.parsed.rejected.map { "\($0.entry.name): \($0.reason)" }
             ) { chosen in
-                let (merged, added) = SiteExchange.merge(chosen, into: sites)
-                sites = merged
-                save()
-                syncMessage = "Imported \(added) site\(added == 1 ? "" : "s")"
+                send(.imported(chosen))
             }
         }
         .onOpenURL { url in
@@ -152,7 +118,7 @@ struct ConfigView: View {
                 guard !parsed.entries.isEmpty || !parsed.rejected.isEmpty else { return }
                 importing = parsed
             } catch {
-                syncMessage = "Could not import \(url.lastPathComponent): \(error.localizedDescription)"
+                send(.importFailed(file: url.lastPathComponent, reason: error.localizedDescription))
             }
         }
     }
@@ -182,35 +148,40 @@ struct ConfigView: View {
         var id: String { (parsed.entries + parsed.rejected.map(\.entry)).map(\.id).joined(separator: ",") }
     }
 
-    /// Reconciles this window's edits against fresh disk state under the
-    /// store's lock, so a site added by an agent is never overwritten.
-    private func save() {
-        let edited = sites
-        let base = baseline
-        do {
-            let written = try SiteStore.mutate { disk in
-                let result = SiteReconcile.persistable(edited: edited, baseline: base, disk: disk)
-                return (result, result)
-            }
-            // A row held back as invalid stays on screen and pending, so the
-            // user keeps typing into it instead of watching it revert.
-            (sites, baseline) = SiteReconcile.absorb(disk: written, edited: edited, baseline: base)
-            saveError = nil
-            seenStamp = Self.stamp(of: SiteStore.fileURL)
-            refreshIcons(previous: base, current: written)
-        } catch {
-            // The baseline stays put, so the edit is still pending and the
-            // next save retries it.
-            saveError = error.localizedDescription
-        }
+    private func send(_ event: ConfigSync.Event) {
+        for effect in sync.handle(event) { perform(effect) }
     }
 
-    /// Off the main thread: icon fetches hit the network, and Spotlight only
-    /// ever reads what is already cached.
-    private func refreshIcons(previous: [Site], current: [Site]) {
-        Task.detached(priority: .utility) {
-            if Favicon.refresh(from: previous, to: current, fetch: Favicon.download) {
-                await MainActor.run { iconGeneration += 1 }
+    private func perform(_ effect: ConfigSync.Effect) {
+        switch effect {
+        case .scheduleSave(let delay):
+            saveTimer?.cancel()
+            saveTimer = Task {
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled else { return }
+                send(.saveDue)
+            }
+        case .save(let edited, let baseline):
+            // Under the store's lock against fresh disk, so a site an agent
+            // added meanwhile is never overwritten.
+            do {
+                let written = try SiteStore.mutate { disk in
+                    let result = SiteReconcile.persistable(edited: edited, baseline: baseline, disk: disk)
+                    return (result, result)
+                }
+                send(.saved(written: written, stamp: Self.stamp(of: SiteStore.fileURL)))
+            } catch {
+                send(.saveFailed(error.localizedDescription))
+            }
+        case .reload(let stamp):
+            send(.reloaded(stamp: stamp, disk: SiteStore.load()))
+        case .refreshIcons(let previous, let current):
+            // Off the main thread: icon fetches hit the network, and Spotlight
+            // only ever reads what is already cached.
+            Task.detached(priority: .utility) {
+                if Favicon.refresh(from: previous, to: current, fetch: Favicon.download) {
+                    await MainActor.run { iconGeneration += 1 }
+                }
             }
         }
     }
@@ -223,7 +194,9 @@ struct ConfigView: View {
             },
             set: { newValue in
                 guard let idx = sites.firstIndex(where: { $0.id == id }) else { return }
-                sites[idx][keyPath: keyPath] = newValue
+                var edited = sites
+                edited[idx][keyPath: keyPath] = newValue
+                send(.edited(edited))
             }
         )
     }

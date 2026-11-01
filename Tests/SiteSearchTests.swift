@@ -1378,3 +1378,111 @@ final class LinkInferenceTests: XCTestCase {
         XCTAssertEqual(LinkInference.draftSite(pasted: nil, among: []).keyword, "")
     }
 }
+
+/// The config window's sync loop, driven by event sequences.
+final class ConfigSyncTests: XCTestCase {
+    private let a = Site(keyword: "a", name: "A", template: "https://a.example/?q={query}")
+    private let b = Site(keyword: "b", name: "B", template: "https://b.example/?q={query}")
+    private let t0 = Date(timeIntervalSince1970: 0)
+    private let t1 = Date(timeIntervalSince1970: 1)
+
+    private func opened(_ sites: [Site]) -> ConfigSync {
+        var sync = ConfigSync(sites: sites)
+        _ = sync.handle(.appeared(stamp: t0))
+        return sync
+    }
+
+    private func renamed(_ site: Site, _ name: String) -> Site {
+        var s = site
+        s.name = name
+        return s
+    }
+
+    func testOpeningBaselinesTheListAndBackfillsIcons() {
+        var sync = ConfigSync(sites: [a])
+        XCTAssertEqual(sync.handle(.appeared(stamp: t0)), [.refreshIcons(previous: [], current: [a])])
+        XCTAssertEqual(sync.baseline, [a])
+        XCTAssertEqual(sync.seenStamp, t0)
+    }
+
+    func testAnEditIsSavedOnceTheDebounceElapses() {
+        var sync = opened([a])
+        let edit = [renamed(a, "A2")]
+        XCTAssertEqual(sync.handle(.edited(edit)), [.scheduleSave(after: ConfigSync.debounce)])
+        XCTAssertEqual(sync.phase, .saveScheduled)
+        XCTAssertEqual(sync.handle(.saveDue), [.save(edited: edit, baseline: [a])])
+        XCTAssertEqual(sync.phase, .idle)
+        XCTAssertEqual(sync.handle(.saved(written: edit, stamp: t1)), [.refreshIcons(previous: [a], current: edit)])
+        XCTAssertEqual(sync.baseline, edit)
+        XCTAssertEqual(sync.seenStamp, t1)
+    }
+
+    func testAnUnchangedListIsNotAnEdit() {
+        var sync = opened([a])
+        XCTAssertEqual(sync.handle(.edited([a])), [])
+        XCTAssertEqual(sync.phase, .idle)
+    }
+
+    func testATimerWithNoSaveScheduledDoesNothing() {
+        var sync = opened([a])
+        XCTAssertEqual(sync.handle(.saveDue), [])
+    }
+
+    func testAFailedSaveKeepsTheEditPendingAndRetries() {
+        var sync = opened([a])
+        let edit = [renamed(a, "A2")]
+        _ = sync.handle(.edited(edit))
+        _ = sync.handle(.saveDue)
+        XCTAssertEqual(sync.handle(.saveFailed("disk full")), [.scheduleSave(after: ConfigSync.retry)])
+        XCTAssertEqual(sync.saveError, "disk full")
+        XCTAssertEqual(sync.baseline, [a], "the edit must stay pending")
+        XCTAssertEqual(sync.handle(.saveDue), [.save(edited: edit, baseline: [a])])
+        _ = sync.handle(.saved(written: edit, stamp: t1))
+        XCTAssertNil(sync.saveError)
+    }
+
+    func testThePollReloadsOnlyWhenTheStampMoved() {
+        var sync = opened([a])
+        XCTAssertEqual(sync.handle(.polled(stamp: t0)), [])
+        XCTAssertEqual(sync.handle(.polled(stamp: t1)), [.reload(stamp: t1)])
+    }
+
+    func testAReloadShowsExternalChangesAndKeepsPendingEdits() {
+        var sync = opened([a])
+        let edit = [renamed(a, "A2")]
+        _ = sync.handle(.edited(edit))
+        XCTAssertEqual(sync.handle(.reloaded(stamp: t1, disk: [a, b])), [])
+        XCTAssertEqual(sync.sites, [renamed(a, "A2"), b])
+        XCTAssertEqual(sync.baseline, [a, b])
+        XCTAssertEqual(sync.phase, .saveScheduled, "the pending edit still saves")
+        XCTAssertEqual(sync.handle(.polled(stamp: t1)), [])
+    }
+
+    func testAnImportSavesAtOnceAndAPendingDebounceIsDropped() {
+        var sync = opened([a])
+        _ = sync.handle(.edited([renamed(a, "A2")]))
+        let entry = SiteExchange.Entry(name: b.name, keyword: b.keyword, template: b.template)
+        let effects = sync.handle(.imported([entry]))
+        guard case .save(let edited, let baseline)? = effects.first, effects.count == 1 else {
+            return XCTFail("expected one immediate save, got \(effects)")
+        }
+        XCTAssertEqual(edited.map(\.name), ["A2", "B"])
+        XCTAssertEqual(baseline, [a])
+        XCTAssertEqual(sync.message, "Imported 1 site")
+        XCTAssertEqual(sync.handle(.saveDue), [])
+    }
+
+    func testAStatusMessageLastsUntilTheNextEdit() {
+        var sync = opened([a])
+        let entry = SiteExchange.Entry(name: b.name, keyword: b.keyword, template: b.template)
+        _ = sync.handle(.imported([entry]))
+        XCTAssertEqual(sync.message, "Imported 1 site")
+        _ = sync.handle(.edited([renamed(a, "A2")] + sync.sites.dropFirst()))
+        XCTAssertNil(sync.message)
+
+        _ = sync.handle(.importFailed(file: "x.sitesearch", reason: "bad"))
+        XCTAssertEqual(sync.message, "Could not import x.sitesearch: bad")
+        _ = sync.handle(.edited([renamed(a, "A3")]))
+        XCTAssertNil(sync.message)
+    }
+}
