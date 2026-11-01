@@ -830,6 +830,19 @@ final class FaviconTests: XCTestCase {
         XCTAssertEqual(icon(site), png)
     }
 
+    func testEnsureCachedFetchesEachURLOnceEvenWhenThePageDeclaresTheConventionalOne() {
+        let site = site("https://example.com/search?q={query}")
+        var fetched: [String] = []
+        let ok = Favicon.ensureCached(for: site, in: tmp) { url in
+            fetched.append(url.absoluteString)
+            return url.absoluteString == "https://example.com"
+                ? Data(#"<link rel="icon" href="/favicon.ico"><link rel="icon" href="/i.png"><link rel="icon" href="/i.png">"#.utf8)
+                : nil
+        }
+        XCTAssertFalse(ok)
+        XCTAssertEqual(fetched, ["https://example.com/favicon.ico", "https://example.com", "https://example.com/i.png"])
+    }
+
     func testEnsureCachedWritesNothingWhenEverythingFails() {
         let site = site("https://example.com/search?q={query}")
         let ok = Favicon.ensureCached(for: site, in: tmp) { _ in nil }
